@@ -24,7 +24,7 @@ domain_name = 'object_division'
 domain_info = domain.get_domain(domain_name)
 
 config = Pack(
-    person = "system",
+    person = sys.argv[1],
     train_path = '../data/negotiate/train.txt',
     val_path = '../data/negotiate/val.txt',
     test_path = '../data/negotiate/test.txt',

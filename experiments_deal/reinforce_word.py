@@ -51,7 +51,7 @@ def main():
         record_freq=100,
         use_gpu=env == 'gpu',
         nepoch=4,
-        nepisode=0,
+        nepisode=500,
         sv_train_freq=4,
         eval_freq=0,
         max_words=100,

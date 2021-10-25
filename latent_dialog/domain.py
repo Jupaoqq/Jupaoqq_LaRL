@@ -73,10 +73,11 @@ class ContextGenerator(object):
             ctx_pair = []
             for line in f:
                 ctx = line.strip().split()
-                ctx_pair.append(ctx)
-                if len(ctx_pair) == 2:
-                    self.ctxs.append(ctx_pair)
-                    ctx_pair = []
+                # ctx_pair.append(ctx)
+                # if len(ctx_pair) == 2:
+                #     self.ctxs.append(ctx_pair)
+                #     ctx_pair = []
+                self.ctxs.append([ctx,ctx])
 
     def sample(self):
         return random.choice(self.ctxs)
@@ -99,10 +100,11 @@ class ContextGeneratorEval(object):
             ctx_pair = []
             for line in f:
                 ctx = line.strip().split()
-                ctx_pair.append(ctx)
-                if len(ctx_pair) == 2:
-                    self.ctxs.append(ctx_pair)
-                    ctx_pair = []
+                # ctx_pair.append(ctx)
+                # if len(ctx_pair) == 2:
+                #     self.ctxs.append(ctx_pair)
+                #     ctx_pair = []
+                self.ctxs.append([ctx,ctx])
 
 
 class TaskGoalGenerator(object):

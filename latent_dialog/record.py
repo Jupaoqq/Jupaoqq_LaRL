@@ -90,30 +90,46 @@ def record_ppl_with_lm(n_epsd, model, data, config, lm_model, ppl_f):
 
 
 def record_rl(n_epsd, dialog, ctx_gen, rl_f, kg):
-    conv_list = []
+    # conv_list = []
     reward_list = []
-    sent_metric = UniquenessSentMetric()
-    word_metric = UniquenessWordMetric()
+    # sys_unique_ = []
+    recall_ = []
+    dist_ = []
+    # sent_metric = UniquenessSentMetric()
+    # word_metric = UniquenessWordMetric()
 
     for ctxs in ctx_gen.ctxs:
         conv, rewards, stats = dialog.run(ctxs, kg, update = False, verbose = False)
         true_reward = rewards[0]
-        reward_list.append(true_reward)
-        conv_list.append(conv)
-        for turn in conv:
-            if turn[0] == 'System':
-                sent_metric.record(turn[1])
-                word_metric.record(turn[1])
+        reward_list.append(stats['system_rew'])
+        # sys_unique_.append(stats['system_unique'])
+        recall_.append(stats['recall@5'])
+        dist_.append(stats['dist-3'])
+        # conv_list.append(conv)
+        # print("Conv-record")
+        # print(conv)
+        # for turn in conv:
+        #     if turn[0] == 'System':
+        #         sent_metric.record(turn[1])
+        #         word_metric.record(turn[1])
 
     # json.dump(conv_list, text_f, indent=4)
     # print(reward_list)
-    avg = []
-    for i in reward_list:
-        avg.append(np.average(i))
-    aver_reward = np.average(avg)
-    unique_sent_num = sent_metric.value()
-    unique_word_num = word_metric.value()
-    print(sent_metric.top_n(10))
+    # avg = []
+    # for i in reward_list:
+    #     avg.append(np.average(i))
+    # aver_reward = np.average(avg)
+    # unique_sent_num = sent_metric.value()
+    # unique_word_num = word_metric.value()
+    # print(sent_metric.top_n(10))
+    r = np.array(reward_list).astype(np.float)
+    # s = np.array(sys_unique_).astype(np.float)
+    ra = np.array(recall_).astype(np.float)
+    d = np.array(dist_).astype(np.float)
+    aver_reward = np.average(r)
+    # sys_unique = np.average(s)
+    recall = np.average(ra)
+    dist = np.average(d)
 
-    rl_f.write('{}\t{}\t{}\t{}\n'.format(n_epsd, aver_reward, unique_sent_num, unique_word_num))
+    rl_f.write('{}\t{}\t{}\t{}\n'.format(n_epsd, aver_reward, recall, dist))
     rl_f.flush()

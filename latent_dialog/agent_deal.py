@@ -139,14 +139,13 @@ class LstmAgent(Agent):
         max_words = self.args.max_words if max_words is None else max_words
         inpt = self.corpus.sent2id([SYS])
         inpt_var = self.model.np2var(np.array(inpt), LONG).view(1, len(inpt))
-        _, outs = self.model.decoder.write(inpt_var, self.lang_h, self.lang_os, max_words, self.model.vocab, stop_tokens, self.goal_h)
+        _, outs, dec_last_s = self.model.decoder.write(inpt_var, self.lang_h, self.lang_os, max_words, self.model.vocab, stop_tokens, self.goal_h)
         if outs[-1] == self.corpus.sent2id([SEL])[-1]:
             eos_patch = self.corpus.sent2id([EOS])
             outs += eos_patch
         inpt += outs
         self.read(inpt, self.goal_h, require_speaker=False)
-        dummy = ''
-        return outs, self.corpus.id2sent(outs), dummy
+        return outs, self.corpus.id2sent(outs), '', dec_last_s
 
     def transform_dialogue_history(self):
         self.dialogue_text = []
@@ -187,20 +186,20 @@ class RlAgent(LstmAgent):
         max_words = self.args.max_words if max_words is None else max_words
         inpt = self.corpus.sent2id([SYS])
         inpt_var = self.model.np2var(np.array(inpt), LONG).view(1, len(inpt))
-        logprobs, outs = self.model.decoder.write(inpt_var, self.lang_h, self.lang_os, max_words, self.model.vocab, stop_tokens, self.goal_h)
+        logprobs, outs, dec_last_s = self.model.decoder.write(inpt_var, self.lang_h, self.lang_os, max_words, self.model.vocab, stop_tokens, self.goal_h)
         self.logprobs.extend(logprobs)
         if outs[-1] == self.corpus.sent2id([SEL])[-1]:
             eos_patch = self.corpus.sent2id([EOS])
             outs += eos_patch
         inpt += outs
         self.read(inpt, self.goal_h, require_speaker=False)
-        dummy = ''
-        return outs, self.corpus.id2sent(outs),dummy
+        return outs, self.corpus.id2sent(outs), '', dec_last_s
 
     def update(self, reward):
-        self.all_rewards.append(reward)
+        reward_ = sum(reward)
+        self.all_rewards.append(reward_)
         # standardize the reward
-        r = (reward - np.mean(self.all_rewards)) / max(1e-4, np.std(self.all_rewards))
+        r = (reward_ - np.mean(self.all_rewards)) / max(1e-4, np.std(self.all_rewards))
         # compute accumulated discounted reward
         g = self.model.np2var(np.array([r]), FLOAT).view(1, 1)
         rewards = []
@@ -216,6 +215,33 @@ class RlAgent(LstmAgent):
         loss.backward()
         nn.utils.clip_grad_norm_(self.model.parameters(), self.args.rl_clip)
         self.opt.step()
+        # print("reward")
+        # print(reward)
+        # self.all_rewards.append(reward)
+        # # standardize the reward
+        # rew_r = []
+        # for i in reward:
+        #     rew_r.append((i - np.mean(reward)) / max(1e-4, np.std(reward)))
+        # # compute accumulated discounted reward
+        # rew_g = []
+        # for r in rew_r:
+        #     rew_g.append(self.model.np2var(np.array([r]), FLOAT).view(1, 1))
+        # rewards = []
+        # # print(rew_g)
+        # count = 0
+        # for p in self.logprobs:
+        #     rewards.insert(0, rew_g[count])
+        #     count = count + 1
+        #     # g = g * self.args.gamma
+
+        # loss = 0
+        # # estimate the loss using one MonteCarlo rollout
+        # for lp, r in zip(self.logprobs, rewards):
+        #     loss -= lp * r
+        # self.opt.zero_grad()
+        # loss.backward()
+        # nn.utils.clip_grad_norm_(self.model.parameters(), self.args.rl_clip)
+        # self.opt.step()
 
 
 class LatentAgent(Agent):
@@ -307,13 +333,13 @@ class LatentAgent(Agent):
         inpt_var = self.model.np2var(np.array(inpt), LONG).view(1, len(inpt))
         dec_init_s, attn_ctxs, logprob_z = self.model.z2dec(self.lang_h, requires_grad=False)
 
-        _, outs = self.model.decoder.write(inpt_var, dec_init_s, attn_ctxs, max_words, self.model.vocab, stop_tokens, self.goal_h)
+        _, outs, dec_last_s = self.model.decoder.write(inpt_var, dec_init_s, attn_ctxs, max_words, self.model.vocab, stop_tokens, self.goal_h)
         if outs[-1] == self.corpus.sent2id([SEL])[-1]:
             eos_patch = self.corpus.sent2id([EOS])
             outs += eos_patch
         inpt += outs
         self.read(inpt, self.goal_h, require_speaker=False)
-        return outs, self.corpus.id2sent(outs), dec_init_s 
+        return outs, self.corpus.id2sent(outs), dec_init_s , dec_last_s
 
 
 class LatentRlAgent(LatentAgent):
@@ -352,7 +378,7 @@ class LatentRlAgent(LatentAgent):
         inpt_var = self.model.np2var(np.array(inpt), LONG).view(1, len(inpt))
         if self.use_latent_rl:
             dec_init_s, attn_ctxs, logprob_z = self.model.z2dec(self.lang_h, requires_grad=False)
-            logprobs, outs = self.model.decoder.write(inpt_var, dec_init_s, self.lang_os, max_words, self.model.vocab, stop_tokens, self.goal_h)
+            logprobs, outs, dec_last_s = self.model.decoder.write(inpt_var, dec_init_s, self.lang_os, max_words, self.model.vocab, stop_tokens, self.goal_h)
             # print("logprobs")
             # print(logprob_z)
             self.logprobs.append(logprob_z)
@@ -360,7 +386,7 @@ class LatentRlAgent(LatentAgent):
             # print(self.logprobs)
         else:
             dec_init_s, attn_ctxs, logprob_z = self.model.z2dec(self.lang_h, requires_grad=True)
-            logprobs, outs = self.model.decoder.write(inpt_var, dec_init_s, self.lang_os, max_words, self.model.vocab,
+            logprobs, outs, dec_last_s = self.model.decoder.write(inpt_var, dec_init_s, self.lang_os, max_words, self.model.vocab,
                                                       stop_tokens, self.goal_h)
             self.logprobs.extend(logprobs)
 
@@ -369,7 +395,7 @@ class LatentRlAgent(LatentAgent):
             outs += eos_patch
         inpt += outs
         self.read(inpt, self.goal_h, require_speaker=False)
-        return outs, self.corpus.id2sent(outs), dec_init_s
+        return outs, self.corpus.id2sent(outs), dec_init_s, dec_last_s
 
     def update(self, reward):
         self.all_rewards.append(reward)

@@ -37,71 +37,6 @@ class BaseEvaluator(object):
         return tp, fp, fn
 
 
-class BLEUScorer(object):
-    ## BLEU score calculator via GentScorer interface
-    ## it calculates the BLEU-4 by taking the entire corpus in
-    ## Calulate based multiple candidates against multiple references
-    def score(self, hypothesis, corpus, n=1):
-        # containers
-        count = [0, 0, 0, 0]
-        clip_count = [0, 0, 0, 0]
-        r = 0
-        c = 0
-        weights = [0.25, 0.25, 0.25, 0.25]
-
-        # accumulate ngram statistics
-        for hyps, refs in zip(hypothesis, corpus):
-            # if type(hyps[0]) is list:
-            #    hyps = [hyp.split() for hyp in hyps[0]]
-            # else:
-            #    hyps = [hyp.split() for hyp in hyps]
-
-            # refs = [ref.split() for ref in refs]
-            hyps = [hyps]
-            # Shawn's evaluation
-            # refs[0] = [u'GO_'] + refs[0] + [u'EOS_']
-            # hyps[0] = [u'GO_'] + hyps[0] + [u'EOS_']
-
-            for idx, hyp in enumerate(hyps):
-                for i in range(4):
-                    # accumulate ngram counts
-                    hypcnts = Counter(ngrams(hyp, i + 1))
-                    cnt = sum(hypcnts.values())
-                    count[i] += cnt
-
-                    # compute clipped counts
-                    max_counts = {}
-                    for ref in refs:
-                        refcnts = Counter(ngrams(ref, i + 1))
-                        for ng in hypcnts:
-                            max_counts[ng] = max(max_counts.get(ng, 0), refcnts[ng])
-                    clipcnt = dict((ng, min(count, max_counts[ng])) \
-                                   for ng, count in hypcnts.items())
-                    clip_count[i] += sum(clipcnt.values())
-
-                # accumulate r & c
-                bestmatch = [1000, 1000]
-                for ref in refs:
-                    if bestmatch[0] == 0: break
-                    diff = abs(len(ref) - len(hyp))
-                    if diff < bestmatch[0]:
-                        bestmatch[0] = diff
-                        bestmatch[1] = len(ref)
-                r += bestmatch[1]
-                c += len(hyp)
-                if n == 1:
-                    break
-        # computing bleu score
-        p0 = 1e-7
-        bp = 1 if c > r else math.exp(1 - float(r) / float(c))
-        p_ns = [float(clip_count[i]) / float(count[i] + p0) + p0 \
-                for i in range(4)]
-        s = math.fsum(w * math.log(p_n) \
-                      for w, p_n in zip(weights, p_ns) if p_n)
-        bleu = bp * math.exp(s)
-        return bleu
-
-
 class BleuEvaluator(BaseEvaluator):
     def __init__(self, data_name):
         self.data_name = data_name
@@ -132,3 +67,72 @@ class BleuEvaluator(BaseEvaluator):
         bleu = corpus_bleu(refs, hyps, smoothing_function=SmoothingFunction().method1)
         report = '\n===== BLEU = %f =====\n' % (bleu,)
         return '\n===== REPORT FOR DATASET {} ====={}'.format(self.data_name, report)
+
+    def distinct_metrics(self, outs):
+        # outputs is a list which contains several sentences, each sentence contains several words
+        unigram_count = 0
+        bigram_count = 0
+        trigram_count=0
+        quagram_count=0
+        unigram_set = set()
+        bigram_set = set()
+        trigram_set=set()
+        quagram_set=set()
+        for sen in outs:
+            for word in sen:
+                unigram_count += 1
+                unigram_set.add(word)
+            for start in range(len(sen) - 1):
+                bg = str(sen[start]) + ' ' + str(sen[start + 1])
+                bigram_count += 1
+                bigram_set.add(bg)
+            for start in range(len(sen)-2):
+                trg=str(sen[start]) + ' ' + str(sen[start + 1]) + ' ' + str(sen[start + 2])
+                trigram_count+=1
+                trigram_set.add(trg)
+            for start in range(len(sen)-3):
+                quag=str(sen[start]) + ' ' + str(sen[start + 1]) + ' ' + str(sen[start + 2]) + ' ' + str(sen[start + 3])
+                quagram_count+=1
+                quagram_set.add(quag)
+        dis1 = len(unigram_set) / len(outs) #unigram_count
+        dis2 = len(bigram_set) / len(outs) #bigram_count
+        dis3 = len(trigram_set)/len(outs) #trigram_count
+        dis4 = len(quagram_set)/len(outs) #quagram_count
+        return dis1, dis2, dis3, dis4
+
+    def rollout_recall(self, pred, actual):
+        # print("pred and actual")
+        # print(pred)
+        # print(actual)
+        total_liked = 0
+        l = []
+        for key, value in actual.items():
+            if value['liked'] == '1':
+                total_liked = total_liked + 1
+
+        for i in pred:
+            if actual.get(i)['liked'] == '1':
+                l.append(1)
+            else:
+                l.append(0)
+
+        r1 = -1
+        r5 = -1
+        r10 = -1
+        if total_liked > 0:
+            if len(pred) > 0:
+                r1 = l[:1].count(1) / total_liked
+            if len(pred) > 4:
+                r5 = l[:5].count(1) / total_liked
+            if len(pred) > 9:
+                r10 = l[:10].count(1) / total_liked
+        # print("r1, r5, r10")
+        # print(r1)
+        # print(r5)
+        # print(r10)
+
+        return r1, r5, r10
+
+
+
+

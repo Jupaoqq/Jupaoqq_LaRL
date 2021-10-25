@@ -24,8 +24,8 @@ def main():
     folder = 'gauss_sys_sl'
     epoch_id = '37'
     env = 'gpu'
-    sim_epoch_id = '49'
-    simulator_folder = 'usr_sl'
+    sim_epoch_id = '33'
+    simulator_folder = 'gauss_usr_sl'
     exp_dir = os.path.join('config_log_model', folder, 'rl-' + start_time)
     if not os.path.exists(exp_dir):
         os.mkdir(exp_dir)
@@ -94,14 +94,23 @@ def main():
     sys = LatentRlAgent(sys_model, corpus, rl_config, name='System', use_latent_rl=rl_config.use_latent_rl)
 
     # SIMULATOR we keep usr frozen, i.e. we don't update its parameters
-    usr_model = HRED(corpus, sim_config)
-    if sim_config.use_gpu:  # TODO gpu -> cpu transfer
-        usr_model.cuda()
+    # usr_model = HRED(corpus, sim_config)
+    # if sim_config.use_gpu:  # TODO gpu -> cpu transfer
+    #     usr_model.cuda()
 
+    # usr_model.load_state_dict(th.load(rl_config.sim_model_path, map_location=lambda storage, location: storage))
+    # usr_model.eval()
+    # usr_type = LstmAgent
+    # usr = usr_type(usr_model, corpus, rl_config, name='User')
+
+
+    usr_model = models_deal.GaussHRED(corpus, sv_config)
+    if sv_config.use_gpu: # TODO gpu -> cpu transfer
+        usr_model.cuda()
     usr_model.load_state_dict(th.load(rl_config.sim_model_path, map_location=lambda storage, location: storage))
+    # we don't want to use Dropout during RL
     usr_model.eval()
-    usr_type = LstmAgent
-    usr = usr_type(usr_model, corpus, rl_config, name='User')
+    usr = LatentRlAgent(usr_model, corpus, rl_config, name='User', use_latent_rl=rl_config.use_latent_rl)
 
     # initialize communication dialogue between two agents
     dialog = Dialog([sys, usr], rl_config)

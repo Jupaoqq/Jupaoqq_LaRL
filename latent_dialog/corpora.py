@@ -138,14 +138,14 @@ class DealCorpus(object):
         avg_sys_mention = sum(sys_mention) / len(sys_mention)
         avg_usr_mention = sum(usr_mention) / len(usr_mention)
 
-        print('Max utt len = %d, mean utt len = %.2f' % (
-            np.max(all_sent_lens), float(np.mean(all_sent_lens))))
-        print('Max dlg len = %d, mean dlg len = %.2f' % (
-            np.max(all_dlg_lens), float(np.mean(all_dlg_lens))))
-        print('Max dlg len = %d, mean dlg len = %.2f' % (
-            np.max(all_dlg_lens), float(np.mean(all_dlg_lens))))
-        print('Avg sys mention = %.2f' % (avg_sys_mention))
-        print('Avg usr mention = %.2f' % (avg_usr_mention))
+        # print('Max utt len = %d, mean utt len = %.2f' % (
+        #     np.max(all_sent_lens), float(np.mean(all_sent_lens))))
+        # print('Max dlg len = %d, mean dlg len = %.2f' % (
+        #     np.max(all_dlg_lens), float(np.mean(all_dlg_lens))))
+        # print('Max dlg len = %d, mean dlg len = %.2f' % (
+        #     np.max(all_dlg_lens), float(np.mean(all_dlg_lens))))
+        # print('Avg sys mention = %.2f' % (avg_sys_mention))
+        # print('Avg usr mention = %.2f' % (avg_usr_mention))
         return new_dlg
 
     def _extract_vocab(self):

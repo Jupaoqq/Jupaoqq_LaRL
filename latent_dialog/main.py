@@ -117,7 +117,7 @@ class Reinforce(object):
             if self.rl_config.sv_train_freq > 0 and n % self.rl_config.sv_train_freq == 0:
                 print('-'*15, 'Supervised Learning', '-'*15)
                 self.train_func(self.sys_model, self.train_data, self.sv_config)
-                print('-'*40)
+                # print('-'*15)
 
             # roll out and learn
 
@@ -129,8 +129,9 @@ class Reinforce(object):
             if self.rl_config.record_freq > 0 and n % self.rl_config.record_freq == 0:
                 # TEST ON TRAINING DATA
                 rl_stats = validate_rl(self.dialog_eval, self.ctx_gen, self.kg, num_episode=400)
-                self.learning_exp_file.write('{}\t{}\t{}\n'.format(n, rl_stats['sys_rew'],
-                                                                       rl_stats['sys_unique']))
+                self.learning_exp_file.write('{}\t{}\t{}\t{}\n'.format(n, rl_stats['sys_rew'],
+                                                                      rl_stats['recall'],
+                                                                      rl_stats['dist']))
                 self.learning_exp_file.flush()
                 aver_reward = rl_stats['sys_rew']
 
@@ -173,20 +174,34 @@ class Reinforce(object):
 def validate_rl(dialog_eval, ctx_gen, kg, num_episode=200):
     print("Validate on training goals for {} episode".format(num_episode))
     reward_list = []
-    sent_metric = UniquenessSentMetric()
-    word_metric = UniquenessWordMetric()
+    # sys_unique_ = []
+    recall_ = []
+    dist_ = []
+    # sent_metric = UniquenessSentMetric()
+    # word_metric = UniquenessWordMetric()
     for i in range(num_episode):
         ctxs = ctx_gen.sample()
         conv, rewards, stats = dialog_eval.run(ctxs, kg, update = False, verbose= i % 100 == 0)
-        true_reward = rewards[0]
-        reward_list.append(true_reward)
-        for turn in conv:
-            if turn[0] == 'System':
-                sent_metric.record(turn[1])
-                word_metric.record(turn[1])
-    results = {'sys_rew': np.average(reward_list),
-               'sys_sent_unique': sent_metric.value(),
-               'sys_unique': word_metric.value()}
+        # true_reward = rewards[0]
+        # print("Conv-val_rl")
+        # print(conv)
+        reward_list.append(stats['system_rew'])
+        # sys_unique_.append(stats['system_unique'])
+        recall_.append(stats['recall@5'])
+        dist_.append(stats['dist-3'])
+        # for turn in conv:
+        #     if turn[0] == 'System':
+        #         sent_metric.record(turn[1])
+        #         word_metric.record(turn[1])
+    r = np.array(reward_list).astype(np.float)
+    # s = np.array(sys_unique_).astype(np.float)
+    ra = np.array(recall_).astype(np.float)
+    d = np.array(dist_).astype(np.float)
+    results = {'sys_rew': np.average(r), 'recall': np.average(ra), 'dist': np.average(d)}
+
+    # 'sys_rew': np.average(reward_list),
+    #            'sys_sent_unique': sent_metric.value(),
+    #            'sys_unique': word_metric.value()}
     return results
 
 
