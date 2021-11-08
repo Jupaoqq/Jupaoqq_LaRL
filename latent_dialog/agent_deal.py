@@ -157,15 +157,6 @@ class RlAgent(LstmAgent):
     """An Agent that updates the model parameters using REINFORCE to maximize the reward."""
     def __init__(self, model, corpus, args, name):
         super(RlAgent, self).__init__(model, corpus, args, name)
-        # params = []
-        # params.extend(self.model.goal_encoder.parameters())
-        # params.extend(self.model.utt_encoder.parameters())
-        # params.extend(self.model.ctx_encoder.parameters())
-        # self.opt = optim.SGD(
-        #     params,
-        #     lr=self.args.rl_lr,
-        #     momentum=self.args.momentum,
-        #     nesterov=(self.args.nesterov and self.args.momentum > 0))
         self.opt = optim.SGD(
             self.model.parameters(),
             lr=self.args.rl_lr,
@@ -215,33 +206,6 @@ class RlAgent(LstmAgent):
         loss.backward()
         nn.utils.clip_grad_norm_(self.model.parameters(), self.args.rl_clip)
         self.opt.step()
-        # print("reward")
-        # print(reward)
-        # self.all_rewards.append(reward)
-        # # standardize the reward
-        # rew_r = []
-        # for i in reward:
-        #     rew_r.append((i - np.mean(reward)) / max(1e-4, np.std(reward)))
-        # # compute accumulated discounted reward
-        # rew_g = []
-        # for r in rew_r:
-        #     rew_g.append(self.model.np2var(np.array([r]), FLOAT).view(1, 1))
-        # rewards = []
-        # # print(rew_g)
-        # count = 0
-        # for p in self.logprobs:
-        #     rewards.insert(0, rew_g[count])
-        #     count = count + 1
-        #     # g = g * self.args.gamma
-
-        # loss = 0
-        # # estimate the loss using one MonteCarlo rollout
-        # for lp, r in zip(self.logprobs, rewards):
-        #     loss -= lp * r
-        # self.opt.zero_grad()
-        # loss.backward()
-        # nn.utils.clip_grad_norm_(self.model.parameters(), self.args.rl_clip)
-        # self.opt.step()
 
 
 class LatentAgent(Agent):
@@ -272,11 +236,6 @@ class LatentAgent(Agent):
             movie[movie_temp[i*3]]['seen'] = movie_temp[i*3+1]
             movie[movie_temp[i*3]]['liked'] = movie_temp[i*3+2]
         self.movie = movie
-        # print(movie)
-        # print(self.movie)c
-        # context_id = np.array(self.corpus.goal2id(self.context))
-        # context_var = self.model.np2var(context_id, LONG).unsqueeze(0) # (1, goal_len)
-        # self.goal_h = self.model.goal_encoder(context_var) # (1, goal_nhid)
         self.goal_h = th.zeros((1, 128), device='cuda')
 
         # data that need updating and collecting
@@ -346,15 +305,6 @@ class LatentRlAgent(LatentAgent):
     """An Agent that updates the model parameters using REINFORCE to maximize the reward."""
     def __init__(self, model, corpus, args, name, use_latent_rl=True):
         super(LatentRlAgent, self).__init__(model, corpus, args, name)
-        # params = []
-        # params.extend(self.model.goal_encoder.parameters())
-        # params.extend(self.model.utt_encoder.parameters())
-        # params.extend(self.model.ctx_encoder.parameters())
-        # self.opt = optim.SGD(
-        #     params,
-        #     lr=self.args.rl_lr,
-        #     momentum=self.args.momentum,
-        #     nesterov=(self.args.nesterov and self.args.momentum > 0))
         self.opt = optim.SGD(
             self.model.parameters(),
             lr=self.args.rl_lr,

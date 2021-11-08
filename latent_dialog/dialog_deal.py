@@ -96,7 +96,7 @@ class Dialog(object):
                 # d = th.matmul(z, self.w_matrix)
                 # s = th.squeeze(d, 0)
                 f = th.matmul(e.float(), th.transpose(self.w_matrix_no_z, 0, 1))
-            r = F.softmax(f, dim=0)
+            r = F.gumbel_softmax(f, dim=0)
             r_flat = th.flatten(r)
             # print(r_flat)
 
@@ -110,7 +110,7 @@ class Dialog(object):
             
             return embed_movie, final
         else:
-            print("insufficient profile")
+            # print("insufficient profile")
             return -1, []
 
     def mention(self, history, mention, id, embed, user):
@@ -152,6 +152,12 @@ class Dialog(object):
             agent.feed_context(ctx)
             if agent.name == "User":
                 profile = agent.movie
+            if agent.name == "System":
+                # for name, param in agent.model.named_parameters():
+                #     if param.requires_grad:
+                #         print(name)
+                #         print(param.data)
+                self.w_matrix = agent.model.w_matrix
         sys_reward = []
         rewards = [0,0]
         # choose who goes first by random

@@ -21,8 +21,8 @@ def main():
     print('[START]', start_time, '='*30)
 
     # RL configuration
-    folder = 'gauss_sys_sl'
-    epoch_id = '37'
+    folder = 'gauss_sys_sl_wm'
+    epoch_id = '42'
     env = 'gpu'
     sim_epoch_id = '49'
     simulator_folder = 'usr_sl'
@@ -45,8 +45,6 @@ def main():
         rl_model_path = os.path.join(exp_dir, 'rl_model'),
         ppl_best_model_path = os.path.join(exp_dir, 'ppl_best_model'),
         reward_best_model_path = os.path.join(exp_dir, 'reward_best_model'),
-        judger_model_path = os.path.join('../FB', 'sv_model.th'),
-        judger_config_path = os.path.join('../FB', 'judger_config.json'),
         record_path = exp_dir,
         record_freq = 50, 
         use_gpu = env == 'gpu', 

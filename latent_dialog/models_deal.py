@@ -203,6 +203,7 @@ class GaussHRED(BaseModel):
         self.nll = NLLEntropy(self.pad_id, config.avg_type)
         self.gauss_kl = criterions.NormKLLoss(unit_average=True)
         self.zero = utils.cast_type(th.zeros(1), FLOAT, self.use_gpu)
+        self.w_matrix = nn.Parameter(th.randn(256, 128, device='cuda'))
 
     def valid_loss(self, loss, batch_cnt=None):
         if self.simple_posterior:
