@@ -101,12 +101,14 @@ def main():
     usr_type = LstmAgent
     usr = usr_type(usr_model, corpus, rl_config, name='User')
 
+    user_sent = [line.strip() for line in open('../data/similarity/user.txt')]
+    sys_sent = [line.strip() for line in open('../data/similarity/system.txt')]
     # initialize communication dialogue between two agents
-    dialog = Dialog([sys, usr], rl_config)
+    dialog = Dialog([sys, usr], rl_config, user_sent, sys_sent)
     ctx_gen = ContextGenerator(rl_config.selfplay_path)
 
     # simulation module
-    dialog_eval = Dialog([sys, usr], rl_config)
+    dialog_eval = Dialog([sys, usr], rl_config, user_sent, sys_sent)
     ctx_gen_eval = ContextGeneratorEval(rl_config.selfplay_eval_path)
 
     # start RL

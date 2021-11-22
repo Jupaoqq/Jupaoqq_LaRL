@@ -23,6 +23,10 @@ print('[START]', start_time, '='*30)
 domain_name = 'object_division'
 domain_info = domain.get_domain(domain_name)
 
+#edit mode, best_conv_model, pre_trained folder
+mode = "both"
+best_conv_model = 42
+
 config = Pack(
     person = sys.argv[1],
     train_path = '../data/negotiate/train.txt',
@@ -37,10 +41,10 @@ config = Pack(
     use_gpu = True,
     op = 'adam',
     init_lr = 0.001,
-    l2_norm=0.00001,
+    l2_norm = 0.00001,
     momentum = 0.0,
     dropout = 0.5,
-    max_epoch = 50,
+    max_epoch = 5,
     embed_size = 256,
     num_layers = 1,
     utt_rnn_cell = 'gru',
@@ -76,13 +80,13 @@ config = Pack(
     goal_embed_size = 128,
     goal_nhid = 128,
     init_range = 0.1,
-    pretrain_folder = '2018-11-19-21-28-29-sl_latent',
-    forward_only = False
+    pretrain_folder = 'gauss_sys_sl_wm',
+    forward_only = True
 )
 
 set_seed(10)
 
-if config.forward_only:
+if mode == "rec_only": 
     saved_path = os.path.join(stats_path, config.pretrain_folder)
     config = Pack(json.load(open(os.path.join(saved_path, 'config.json'))))
     config['forward_only'] = True
@@ -116,26 +120,57 @@ if config.use_gpu:
     model.cuda()
 
 best_epoch = None
-if not config.forward_only:
+if mode != "rec_only":
+    task = "conv"
     try:
-        best_epoch = train(model, train_data, val_data, test_data, config, evaluator, gen=generate)
+        best_epoch = train(model, train_data, val_data, test_data, config, evaluator, task, gen=generate, )
     except KeyboardInterrupt:
         print('Training stopped by keyboard.')
 
-config.batch_size = 32
-if best_epoch is None:
-    model_ids = sorted([int(p.replace('-model', '')) for p in os.listdir(saved_path) if '-model' in p])
-    best_epoch = model_ids[-1]
+    config.batch_size = 32
+    if best_epoch is None:
+        model_ids = sorted([int(p.replace('-model', '')) for p in os.listdir(saved_path) if '-model' in p])
+        best_epoch = model_ids[-1]
 
-model.load_state_dict(th.load(os.path.join(saved_path, '{}-model'.format(best_epoch))))
-logger.info("Load model {}".format(best_epoch))
-logger.info("Forward Only Evaluation")
-# run the model on the test dataset
-validate(model, val_data, config)
-validate(model, test_data, config)
+    model.load_state_dict(th.load(os.path.join(saved_path, '{}-model'.format(best_epoch))))
+    logger.info("Load model {}".format(best_epoch))
+    logger.info("Forward Only Evaluation")
+    # run the model on the test dataset
+    validate(task, model, val_data, config)
+    validate(task, model, test_data, config)
 
-with open(os.path.join(saved_path, '{}_test_file.txt'.format(start_time)), 'w') as f:
-    generate(model, test_data, config, evaluator, num_batch=None, dest_f=f)
+    with open(os.path.join(saved_path, '{}_test_file.txt'.format(start_time)), 'w') as f:
+        generate(task, model, test_data, config, evaluator, num_batch=None, dest_f=f)
+
+if mode != "conv_only":
+    config.max_epoch = 5
+    task = "rec"
+    if mode == "both":
+        best_conv_model = best_epoch
+    model.load_state_dict(th.load(os.path.join(saved_path, '{}-model'.format(best_conv_model))))
+    best_epoch2 = None
+ 
+    try:
+        best_epoch2 = train(model, train_data, val_data, test_data, config, evaluator, task, gen=generate)
+    except KeyboardInterrupt:
+        print('Training stopped by keyboard.')
+
+    config.batch_size = 32
+    if best_epoch2 is None:
+        model_ids = sorted([int(p.replace('-rec-model', '')) for p in os.listdir(saved_path) if '-rec-model' in p])
+        best_epoch2 = model_ids[-1]
+
+    model.load_state_dict(th.load(os.path.join(saved_path, '{}-rec-model'.format(best_epoch2))))
+    logger.info("Load model {}".format(best_epoch2))
+    logger.info("Forward Only Evaluation")
+    # run the model on the test dataset
+    validate(task, model, val_data, config)
+    validate(task, model, test_data, config)
+
+# with open(os.path.join(saved_path, '{}_test_file.txt'.format(start_time)), 'w') as f:
+#     generate(model, test_data, config, evaluator, num_batch=None, dest_f=f)
+
+
 
 end_time = time.strftime('%Y-%m-%d-%H-%M-%S', time.localtime(time.time()))
 logger.info('[END]'+ end_time+ '='*30)
