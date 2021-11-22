@@ -5,6 +5,7 @@ from latent_dialog.base_models import BaseModel
 from latent_dialog.corpora import SYS, EOS, PAD
 from latent_dialog.utils import INT, FLOAT, LONG, Pack
 from latent_dialog.enc2dec.encoders import EncoderRNN, RnnUttEncoder
+from latent_dialog.enc2dec.decoders import DecoderRNN
 from latent_dialog.nn_lib import IdentityConnector, Bi2UniConnector
 from latent_dialog.enc2dec.decoders import DecoderRNN, GEN, GEN_VALID, TEACH_FORCE
 from latent_dialog.criterions import NLLEntropy, NLLEntropy4CLF, CombinedNLLEntropy4CLF
@@ -12,7 +13,22 @@ import latent_dialog.utils as utils
 import latent_dialog.nn_lib as nn_lib
 import latent_dialog.criterions as criterions
 import numpy as np
+import pandas as pd
+from latent_dialog.utils import get_detokenize
+from latent_dialog.recommendation import softmax_func, movieID_to_embedding
+from latent_dialog.main import get_sent
 
+# def get_sent(vocab, de_tknize, data, b_id, stop_eos=True, stop_pad=True):
+#     ws = []
+#     for t_id in range(data.shape[1]):
+#         w = vocab[data[b_id, t_id]]
+#         # TODO EOT
+#         if (stop_eos and w == EOS) or (stop_pad and w == PAD):
+#             break
+#         if w != PAD:
+#             ws.append(w)
+
+#     return de_tknize(ws)
 
 class HRED(BaseModel):
     def __init__(self, corpus, config):
@@ -127,6 +143,10 @@ class HRED(BaseModel):
                                                                    beam_size=self.config.beam_size,
                                                                    goal_hid=goals_h)  # (batch_size, goal_nhid)
 
+            
+            # print(ret_dict)
+            # print(labels)
+
             if mode == GEN:
                 return ret_dict, labels
             if return_latent:
@@ -204,6 +224,8 @@ class GaussHRED(BaseModel):
         self.gauss_kl = criterions.NormKLLoss(unit_average=True)
         self.zero = utils.cast_type(th.zeros(1), FLOAT, self.use_gpu)
         self.w_matrix = nn.Parameter(th.randn(256, 128, device='cuda'))
+        self.kg = pd.read_csv(self.config.kg_path, header = None)
+        self.kg = self.kg.astype({128: int})
 
     def valid_loss(self, loss, batch_cnt=None):
         if self.simple_posterior:
@@ -239,10 +261,30 @@ class GaussHRED(BaseModel):
 
         return dec_init_state, attn_context, joint_logpz
 
-    def forward(self, data_feed, mode, clf=False, gen_type='greedy', use_py=None, return_latent=False):
+
+
+    def forward(self, config, task, data_feed, mode, clf=False, gen_type='greedy', use_py=None, return_latent=False):
+        
+
+
         ctx_lens = data_feed['context_lens']  # (batch_size, )cc
         ctx_utts = self.np2var(data_feed['contexts'], LONG)  # (batch_size, max_ctx_len, max_utt_len)
         out_utts = self.np2var(data_feed['outputs'], LONG)  # (batch_size, max_out_len)
+        usr_mention = data_feed['usr_mention']
+        sys_mention = data_feed['sys_mention']
+        movies = data_feed['movies']
+        movies_batch = []
+        for mov in movies:
+          movie = dict()
+          for i in range(len(mov)//4):
+              movie[mov[i*4]] = {}
+              movie[mov[i*4]]['suggested'] = mov[i*4+1]
+              movie[mov[i*4]]['seen'] = mov[i*4+2]
+              movie[mov[i*4]]['liked'] = mov[i*4+3]
+          movies_batch.append(movie)
+        # print(movies_batch)
+        # print("Hello")
+        # print(len(data_feed['sys_mention']))  # (batch_size, max_out_len)
         # goals = self.np2var(data_feed['goals'], LONG)  # (batch_size, goal_len)
         batch_size = len(ctx_lens)
         # if self.person == "user":
@@ -262,6 +304,12 @@ class GaussHRED(BaseModel):
 
         # get decoder inputs
         dec_inputs = out_utts[:, :-1]
+        # print(ctx_utts[0])
+        # print(out_utts[0])
+        # print(usr_mention[0])
+        # print(sys_mention[0])
+        # print(movies[0])
+        # print(dec_inputs[0])
         labels = out_utts[:, 1:].contiguous()
 
         # create decoder initial states
@@ -289,6 +337,9 @@ class GaussHRED(BaseModel):
         if self.config.dec_rnn_cell == 'lstm':
             dec_init_state = tuple([dec_init_state, dec_init_state])
 
+        mode2 = mode
+        if task == "rec":
+          mode2 = GEN
         # decode
         dec_outputs, dec_hidden_state, ret_dict = self.decoder(batch_size=batch_size,
                                                                dec_inputs=dec_inputs,
@@ -296,21 +347,91 @@ class GaussHRED(BaseModel):
                                                                dec_init_state=dec_init_state,  # tuple: (h, c)
                                                                attn_context=attn_context,
                                                                # (batch_size, max_ctx_len, ctx_cell_size)
-                                                               mode=mode,
+                                                               mode=mode2,
                                                                gen_type=gen_type,
                                                                beam_size=self.config.beam_size,
                                                                goal_hid=goals_h)  # (batch_size, goal_nhid)
 
-        if mode == GEN:
-            ret_dict['sample_z'] = sample_z
-            return ret_dict, labels
-
-        else:
+        # print("task")
+        # print(dec_outputs.shape)
+        # print(labels.shape)
+        if task == "conv":
+          if mode == GEN:
+              ret_dict['sample_z'] = sample_z
+              return ret_dict, labels
+          else:
             result = Pack(nll=self.nll(dec_outputs, labels))
             pi_kl = self.gauss_kl(q_mu, q_logvar, p_mu, p_logvar)
             result['pi_kl'] = pi_kl
             result['nll'] = self.nll(dec_outputs, labels)
             return result
+
+
+        if task == "rec":
+          # print(mode)
+          # print(ret_dict[DecoderRNN.KEY_SEQUENCE])
+          if len(ret_dict[DecoderRNN.KEY_SEQUENCE]) > 0:
+            de_tknize = get_detokenize()
+            ret_dict['sample_z'] = sample_z
+            outputs = ret_dict
+            labels = labels.cpu()
+            pred_labels = [t.cpu().data.numpy() for t in outputs[DecoderRNN.KEY_SEQUENCE]]
+
+            pred_labels = np.array(pred_labels, dtype=int).squeeze(-1).swapaxes(0, 1) # (batch_size, max_dec_len)
+            true_labels = labels.data.numpy() # (batch_size, output_seq_len)
+
+            # get attention if possible
+            if config.dec_use_attn:
+                pred_attns = [t.cpu().data.numpy() for t in outputs[DecoderRNN.KEY_ATTN_SCORE]]
+                pred_attns = np.array(pred_attns, dtype=float).squeeze(2).swapaxes(0, 1) # (batch_size, max_dec_len, max_ctx_len)
+            else:
+                pred_attns = None
+            # get context
+            ctx = data_feed.get('contexts') # (batch_size, max_ctx_len, max_utt_len)
+            ctx_len = data_feed.get('context_lens') # (batch_size, )
+            # print(pred_labels.shape)
+            loss_total = 0
+            loss_len = 0
+
+            for b_id in range(pred_labels.shape[0]):
+                # TODO attn
+                pred_str = get_sent(self.vocab, de_tknize, pred_labels, b_id) 
+                true_str = get_sent(self.vocab, de_tknize, true_labels, b_id)
+
+                z = dec_init_state
+                # if '[ITEM]' in true_str and '[ITEM]' in pred_str:
+                # print(movies_batch[b_id])
+                t = z[0][b_id]
+                t = t[None, None, :]
+
+                embed, m_id, loss = softmax_func(t, movies_batch[b_id], self.kg, self.w_matrix, True)
+                # print(m_id)
+                if loss != -1:
+                  loss_total = loss_total + loss
+                  loss_len = loss_len + 1
+            avg_loss = loss_total / loss_len
+            # print(loss_total)
+            # print(avg_loss)
+            if mode == GEN:
+              ret_dict['sample_z'] = sample_z
+              return ret_dict, labels
+            else:
+              return avg_loss
+          else:
+            print("error")
+            # if "[ITEM]" in pred_str:
+            #   embed, m_id = self.softmax_func(z, profile, kg)
+
+
+            # if mode == GEN:
+            #   ret_dict['sample_z'] = sample_z
+            #   return dec_init_state, self.w_matrix, ret_dict, mention, movies
+            # else: 
+            #   return
+
+          return
+
+        
 
 
 class CatHRED(BaseModel):

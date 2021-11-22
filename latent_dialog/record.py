@@ -36,6 +36,7 @@ def record(n_epsd, model, val_data, sv_config, lm_model, ppl_f, dialog, ctx_gen_
     record_rl(n_epsd, dialog, ctx_gen_eval, rl_f, kg)
 
 def record_ppl_with_lm(n_epsd, model, data, config, lm_model, ppl_f):
+    task = "conv"
     model.eval()
     loss_list = []
     data.epoch_init(config, shuffle=False, verbose=True)
@@ -44,7 +45,7 @@ def record_ppl_with_lm(n_epsd, model, data, config, lm_model, ppl_f):
         if batch is None:
             break
         for i in range(1):
-            loss = model(batch, mode=TEACH_FORCE, use_py=True)
+            loss = model(config, task, batch, mode=TEACH_FORCE, use_py=True)
             loss_list.append(loss.nll.item())
 
     # USE LM to test generation performance
@@ -56,7 +57,7 @@ def record_ppl_with_lm(n_epsd, model, data, config, lm_model, ppl_f):
         if batch is None:
             break
 
-        outputs, labels = model(batch, mode=GEN, gen_type=config.gen_type)
+        outputs, labels = model(config, task, batch, mode=GEN, gen_type=config.gen_type)
         # move from GPU to CPU
         labels = labels.cpu()
         pred_labels = [t.cpu().data.numpy() for t in outputs[DecoderRNN.KEY_SEQUENCE]]

@@ -229,13 +229,20 @@ class LatentAgent(Agent):
         # print(context)
         self.context = context
         movie_temp = context
+        # print("hello")
+        # print(movie_temp)
+        # print("hello2")
+        # print(len(movie_temp)//3)
 
         movie = dict()
         for i in range(len(movie_temp)//3):
+            # print(movie_temp[i*3])
             movie[movie_temp[i*3]] = {}
             movie[movie_temp[i*3]]['seen'] = movie_temp[i*3+1]
             movie[movie_temp[i*3]]['liked'] = movie_temp[i*3+2]
         self.movie = movie
+        # print("hello3")
+        # print(movie)
         self.goal_h = th.zeros((1, 128), device='cuda')
 
         # data that need updating and collecting

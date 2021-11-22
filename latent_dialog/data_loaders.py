@@ -37,7 +37,7 @@ class DealDataLoaders(BaseDataLoaders):
                 for turn in dlg.dlg[s_idx: e_idx]:
                     turn['utt'] = self.pad_to(self.max_utt_len, turn.utt, do_pad=False)
                     context.append(turn)
-                results.append(Pack(context=context, response=response, movie = dlg.movie, sys_mention=response.sys_mention, usr_mention=response.usr_mention))
+                results.append(Pack(context=context, response=response, movie = dlg.movie))
                 # print(results)
         return results
 
@@ -56,7 +56,7 @@ class DealDataLoaders(BaseDataLoaders):
         # print(rows)
 
         for row in rows:
-            in_row, out_row, movie_row, sys_mention_row, usr_mention_row = row.context, row.response, row.movie, row.sys_mention, row.usr_mention
+            in_row, out_row, movie_row = row.context, row.response, row.movie
 
             # source context
             batch_ctx = []
@@ -70,11 +70,21 @@ class DealDataLoaders(BaseDataLoaders):
             out_utts.append(out_utt)
             out_lens.append(len(out_utt))
 
-            sys_mention.append(sys_mention_row)
-            usr_mention.append(usr_mention_row)
+            sys_mention.append(row.response.sys_mention)
+            usr_mention.append(row.response.usr_mention)
 
             # movie
             movie.append(movie_row)
+        # print(movie)
+
+
+
+        # print(ctx_utts[0])
+        # print(out_utts[0])
+        # print(usr_mention[0])
+        # print(sys_mention[0])
+        # print(movie[0])
+        
 
         vec_ctx_lens = np.array(ctx_lens) # (batch_size, ), number of turns
         max_ctx_len = np.max(vec_ctx_lens)
@@ -84,15 +94,15 @@ class DealDataLoaders(BaseDataLoaders):
         vec_out_lens = np.array(out_lens) # (batch_size, ), number of tokens
         max_out_len = np.max(vec_out_lens)
         vec_out_utts = np.zeros((self.batch_size, max_out_len), dtype=np.int32)
-        vec_sys_mention = np.zeros((self.batch_size, 128), dtype=np.float32)
-        vec_usr_mention = np.zeros((self.batch_size, 128), dtype=np.float32)
+        # vec_sys_mention = {}
+        # vec_usr_mention = {}
 
         for b_id in range(self.batch_size):
             vec_ctx_utts[b_id, :vec_ctx_lens[b_id], :] = ctx_utts[b_id]
             vec_out_utts[b_id, :vec_out_lens[b_id]] = out_utts[b_id]
-            # print(sys_mention[b_id])
-            vec_sys_mention[b_id] = sys_mention[b_id]
-            vec_usr_mention[b_id] = usr_mention[b_id]
+            # print(sys_mention)
+            # vec_sys_mention[b_id] = sys_mention[b_id]
+            # vec_usr_mention[b_id] = usr_mention[b_id]
             # vec_goals[b_id, :] = goals[b_id]
 
         return Pack(context_lens=vec_ctx_lens, \
@@ -100,6 +110,6 @@ class DealDataLoaders(BaseDataLoaders):
                     context_confs=vec_ctx_confs, \
                     output_lens=vec_out_lens, \
                     outputs=vec_out_utts, \
-                    sys_mention = vec_sys_mention, \
-                    usr_mention = vec_usr_mention, \
+                    sys_mention = sys_mention, \
+                    usr_mention = usr_mention, \
                     movies=movie)

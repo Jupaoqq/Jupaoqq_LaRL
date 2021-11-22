@@ -24,9 +24,12 @@ class BaseModel(nn.Module):
     def forward(self, *inputs):
         raise NotImplementedError
 
-    def backward(self, loss, batch_cnt):
-        total_loss = self.valid_loss(loss, batch_cnt)
-        total_loss.backward()
+    def backward(self, loss, batch_cnt, task):
+        if task == "conv":
+            total_loss = self.valid_loss(loss, batch_cnt)
+            total_loss.backward()
+        else:
+            loss.backward()
 
     def valid_loss(self, loss, batch_cnt=None):
         total_loss = 0.0
@@ -65,9 +68,11 @@ class BaseModel(nn.Module):
             return optim.RMSprop(params, lr=config.fine_tune_lr, momentum=config.fine_tune_momentum)
 
         
-    def model_sel_loss(self, loss, batch_cnt):
-        return self.valid_loss(loss, batch_cnt)
-
+    def model_sel_loss(self, task, loss, batch_cnt):
+        if task == "conv":
+            return self.valid_loss(loss, batch_cnt)
+        else:
+            return loss
 
     def extract_short_ctx(self, context, context_lens, backward_size=1):
         utts = []

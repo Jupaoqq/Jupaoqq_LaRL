@@ -104,7 +104,9 @@ class ContextGeneratorEval(object):
                 # if len(ctx_pair) == 2:
                 #     self.ctxs.append(ctx_pair)
                 #     ctx_pair = []
-                self.ctxs.append(ctx)
+                self.ctxs.append([ctx,ctx])
+        # print(self.ctxs)
+
 
 
 class TaskGoalGenerator(object):

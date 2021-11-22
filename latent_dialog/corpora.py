@@ -43,10 +43,11 @@ class DealCorpus(object):
 
     def _process_dialogue(self, data):
         def transform(token_list):
+            # print(token_list)
             kg = self.kg
             usr, sys = [], []
-            usr_mention, sys_mention = [], []
-            usr_avg_mention, sys_avg_mention = np.zeros((1, 128), dtype=np.float32), np.zeros((1, 128), dtype=np.float32)
+            # usr_mention, sys_mention = [], []
+            # usr_avg_mention, sys_avg_mention = np.zeros((1, 128), dtype=np.float32), np.zeros((1, 128), dtype=np.float32)
             ptr = 0
             while ptr < len(token_list):
                 turn_ptr = ptr
@@ -57,12 +58,7 @@ class DealCorpus(object):
 
                     if '@' in cur_token:
                         movieID = ''.join(filter(str.isdigit, cur_token) ) 
-                        embed_df = ""
-                        if any(char.isdigit() for char in movieID):
-                            embed_df = kg.loc[kg[128] == int(movieID)]
-                            if not embed_df.empty:
-                                e = embed_df.iloc[:, 0:128].to_numpy()
-                                turn_mention.append(e)
+                        turn_mention.append(movieID)
                         cur_token = "[ITEM]"
 
                     turn_list.append(cur_token)
@@ -72,29 +68,30 @@ class DealCorpus(object):
                         break
                 all_sent_lens.append(len(turn_list))
                 if turn_list[0] == USR:
-                    usr_mention.extend(turn_mention)
-                    if usr_mention:
+                    # usr_mention.extend(turn_mention)
+                    # if usr_mention:
                         # print("len")
                         # print(len(usr_mention))
-                        usr_avg_mention = np.sum(np.array(usr_mention), axis = 0) / len(usr_mention)
-                    usr.append(Pack(utt=turn_list, speaker=USR, sys_mention=sys_avg_mention[0], usr_mention=usr_avg_mention[0]))
+                        # usr_avg_mention = np.sum(np.array(usr_mention), axis = 0) / len(usr_mention)
+                    usr.append(Pack(utt=turn_list, speaker=USR, sys_mention=[], usr_mention=turn_mention))
                 elif turn_list[0] == SYS:
-                    sys_mention.extend(turn_mention)
-                    if sys_mention:
-                        sys_avg_mention = np.sum(np.array(sys_mention), axis = 0) / len(sys_mention)
-                    sys.append(Pack(utt=turn_list, speaker=SYS, sys_mention=sys_avg_mention[0], usr_mention=usr_avg_mention[0]))
+                    # sys_mention.extend(turn_mention)
+                    # if sys_mention:
+                    #     sys_avg_mention = np.sum(np.array(sys_mention), axis = 0) / len(sys_mention)
+                    sys.append(Pack(utt=turn_list, speaker=SYS, sys_mention=turn_mention, usr_mention=[]))
                 else:
                     raise ValueError('Invalid speaker')
 
 
             all_dlg_lens.append(len(usr) + len(sys))
-            return usr, sys, len(sys_mention), len(usr_mention)
+            return usr, sys
 
         new_dlg = []
         all_sent_lens = []
         all_dlg_lens = []
         sys_mention = []
         usr_mention = []
+        movie_match = []
         for raw_dlg in data:
             raw_words = raw_dlg.split()
 
@@ -112,10 +109,10 @@ class DealCorpus(object):
             else:
                 print('FATAL ERROR!!! ({})'.format(words))
                 exit(-1)
-            usr_utts, sys_utts, len_sys_mention, len_usr_mention = transform(words)
+            usr_utts, sys_utts = transform(words)
 
-            sys_mention.append(len_sys_mention)
-            usr_mention.append(len_usr_mention)
+            # sys_mention.append(len_sys_mention)
+            # usr_mention.append(len_usr_mention)
 
 
             for usr_turn, sys_turn in zip(usr_utts, sys_utts):
@@ -130,13 +127,15 @@ class DealCorpus(object):
             elif len(sys_utts) - len(usr_utts) == 1:
                 cur_dlg.append(sys_utts[-1])
 
+            # print(cur_dlg)
+
             # process movie
             user_movie = raw_words[raw_words.index('<user>') + 1: raw_words.index('</user>')]
 
             new_dlg.append(Pack(dlg=cur_dlg, movie = user_movie))
 
-        avg_sys_mention = sum(sys_mention) / len(sys_mention)
-        avg_usr_mention = sum(usr_mention) / len(usr_mention)
+        # avg_sys_mention = sum(sys_mention) / len(sys_mention)
+        # avg_usr_mention = sum(usr_mention) / len(usr_mention)
 
         # print('Max utt len = %d, mean utt len = %.2f' % (
         #     np.max(all_sent_lens), float(np.mean(all_sent_lens))))

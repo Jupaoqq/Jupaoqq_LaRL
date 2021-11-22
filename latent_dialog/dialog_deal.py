@@ -8,11 +8,15 @@ from latent_dialog.utils import read_lines
 from latent_dialog.corpora import EOS, SEL
 from latent_dialog import evaluators
 import re
-
+from latent_dialog.recommendation import softmax_func, movieID_to_embedding
+from latent_dialog.main import get_sent
+from sentence_transformers import SentenceTransformer, util
+import scipy
 
 class Dialog(object):
     """Dialogue runner."""
-    def __init__(self, agents, args):
+
+    def __init__(self, agents, args, usr_sent, sys_sent):
         assert len(agents) == 2
         self.agents = agents
         self.args = args
@@ -23,6 +27,43 @@ class Dialog(object):
         self.w_matrix_no_z = th.randn(1, 128, device='cuda')
         self.evaluator = evaluators.BleuEvaluator('Roll out')
         self._register_metrics()
+        self.BERT_model = SentenceTransformer('all-MiniLM-L6-v2')
+        self.usr_embedding = self.BERT_model.encode(usr_sent)
+        self.sys_embedding = self.BERT_model.encode(sys_sent)
+
+
+    def consine_sim(self, queries, person):
+        sentence_embeddings = None
+        if person == "System":
+            sentence_embeddings = self.sys_embedding
+        else:
+            sentence_embeddings = self.usr_embedding
+        # queries = [query]
+        # code adapted from https://github.com/UKPLab/sentence-transformers/blob/master/examples/application_semantic_search.py
+        query_embeddings = self.BERT_model.encode(queries)
+
+        # Find the closest 5 sentences of the corpus for each query sentence based on cosine similarity
+        number_top_matches = 5 #@param {type: "number"}
+
+        all_sim = 0
+        count = 0
+        for query, query_embedding in zip(queries, query_embeddings):
+            distances = scipy.spatial.distance.cdist([query_embedding], sentence_embeddings, "cosine")[0]
+
+            results = zip(range(len(distances)), distances)
+            results = sorted(results, key=lambda x: x[1])
+
+            # print("\n\n======================\n\n")
+            # print("Query:", query)
+            # print("\nTop 5 most similar sentences in corpus:")
+
+            total = 0
+            for idx, distance in results[0:number_top_matches]:
+                total = total + (1 - distance)
+            all_sim = all_sim + (total / 5)
+            count = count + 1
+
+        return all_sim / count
 
     def _register_metrics(self):
         """Registers valuable metrics."""
@@ -57,61 +98,7 @@ class Dialog(object):
     def show_metrics(self):
         return ' '.join(['%s = %s' % (k, v) for k, v in self.metrics.dict().items()])
 
-    def movieID_to_embedding(self, movieID, kg):
-        embed_df = kg.loc[kg[128] == int(movieID)]
-        if not embed_df.empty:
-            e = embed_df.iloc[:, 0:128].to_numpy()
-            embed = th.as_tensor(e[0]).to(device="cuda").unsqueeze(0)
-            return embed
-        else:
-            return ""
 
-    def softmax_func(self, z, profile, kg):
-        # print("Dimensions:")
-        # print(z)
-        # print(z.shape)
-        e = ""
-        movies = []
-        # print(profile)
-        for key, a in profile.items():
-            embed = self.movieID_to_embedding(key, kg)
-            # print(embed)
-            if len(e) == 0:
-                if len(embed) > 0:
-                    e = embed
-                    movies.append(key)
-            else:
-                if len(embed) > 0:
-                    e = th.cat([e, embed], dim = 0)
-                    movies.append(key)
-                    # print("Not found")
-        # print(len(movies))
-        # print(self.w_matrix)
-        if len(e) > 0:
-            if len(z) > 0:
-                d = th.matmul(z, self.w_matrix)
-                s = th.squeeze(d, 0)
-                f = th.matmul(e.float(), th.transpose(s, 0, 1))
-            else:
-                # d = th.matmul(z, self.w_matrix)
-                # s = th.squeeze(d, 0)
-                f = th.matmul(e.float(), th.transpose(self.w_matrix_no_z, 0, 1))
-            r = F.gumbel_softmax(f, dim=0)
-            r_flat = th.flatten(r)
-            # print(r_flat)
-
-            _, ind_list = th.topk(r_flat, len(movies))
-            embed_movie = th.index_select(e, 0, ind_list[0])
-            # print(ind_list)
-
-            ind = ind_list.tolist() 
-            prob_sorted = (movies[i] for i in ind)    
-            final = list(prob_sorted)
-            
-            return embed_movie, final
-        else:
-            # print("insufficient profile")
-            return -1, []
 
     def mention(self, history, mention, id, embed, user):
         if len(history) == 0:
@@ -142,12 +129,12 @@ class Dialog(object):
 
         return rew
 
-
     def run(self, ctxs, kg, update = True, verbose=True):
         """Runs one instance of the dialogue."""
         # assert len(self.agents) == len(ctxs)
         profile = ""
         # initialize agents by feeding in the context
+        
         for agent, ctx in zip(self.agents, ctxs):
             agent.feed_context(ctx)
             if agent.name == "User":
@@ -206,17 +193,27 @@ class Dialog(object):
             # self.metrics.record('full_match', out_words)
             # self.metrics.record('%s_unique' % writer.name, out_words)
 
+            to_analyze = []
+            for ii in out_words:
+                if "<" not in ii:
+                    to_analyze.append(ii)
+            rew_sent = self.consine_sim(["".join(to_analyze)], writer.name) 
+            # print(rew_sent)
             # append the utterance to the conversation
             conv.append(out_words)
             rew = 0
             for i in out_words:
-                if writer.name == "System": 
-
+                if writer.name == "System":
                     s_turn += 1
                     
                     if "[ITEM]" in i:
                         i_turn += 1
-                        embed, m_id = self.softmax_func(z, profile, kg)
+                        w_m = self.w_matrix_no_z
+                        use_z = False
+                        if len(z) > 0:
+                            w_m = self.w_matrix
+                            use_z = True
+                        embed, m_id, _ = softmax_func(z, profile, kg, w_m, use_z)
                         if len(m_id) > 0:
                             sys_prob.append(m_id)
                             rew = self.reward(profile, m_id[0])
@@ -305,7 +302,9 @@ class Dialog(object):
             print('='*50)
 
         stats = dict()
+        stats['recall@1'] = self.metrics.metrics['recall@1'].show()
         stats['recall@5'] = self.metrics.metrics['recall@5'].show()
+        stats['recall@10'] = self.metrics.metrics['recall@10'].show()
         stats['dist-3'] = self.metrics.metrics['dist-3'].show()
         stats['system_rew'] = self.metrics.metrics['system_rew'].show()
         # stats['system_unique'] = self.metrics.metrics['system_unique'].show()
