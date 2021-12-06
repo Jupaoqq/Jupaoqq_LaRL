@@ -38,10 +38,12 @@ class DealDataLoaders(BaseDataLoaders):
                     turn['utt'] = self.pad_to(self.max_utt_len, turn.utt, do_pad=False)
                     context.append(turn)
                 results.append(Pack(context=context, response=response, movie = dlg.movie))
-                # print(results)
+        # print(results[0])
+        # print(results[1])
+        # print(results[2])
         return results
 
-    def epoch_init(self, config, shuffle=True, verbose=True, fix_batch=False):
+    def epoch_init(self, config, shuffle=False, verbose=True, fix_batch=False):
         super(DealDataLoaders, self).epoch_init(config, shuffle=shuffle, verbose=verbose)
 
     def _prepare_batch(self, selected_index):

@@ -66,6 +66,17 @@ class BleuEvaluator(BaseEvaluator):
             hyps.append(hyp_tokens)
         bleu = corpus_bleu(refs, hyps, smoothing_function=SmoothingFunction().method1)
         report = '\n===== BLEU = %f =====\n' % (bleu,)
+
+        bleu1 = corpus_bleu(refs, hyps, smoothing_function=SmoothingFunction().method1, weights=(1, 0, 0, 0))
+        bleu2 = corpus_bleu(refs, hyps, smoothing_function=SmoothingFunction().method1, weights=(0, 1, 0, 0))
+        bleu3 = corpus_bleu(refs, hyps, smoothing_function=SmoothingFunction().method1, weights=(0, 0, 1, 0))
+        bleu4 = corpus_bleu(refs, hyps, smoothing_function=SmoothingFunction().method1, weights=(0, 0, 0, 1))
+        print('===== BLEU@1 = %f =====' % (bleu1,))
+        print('===== BLEU@2 = %f =====' % (bleu2,))
+        print('===== BLEU@3 = %f =====' % (bleu3,))
+        print('===== BLEU@4 = %f =====' % (bleu4,))
+
+
         return '\n===== REPORT FOR DATASET {} ====={}'.format(self.data_name, report)
 
     def distinct_metrics(self, outs):
@@ -96,8 +107,8 @@ class BleuEvaluator(BaseEvaluator):
                 quagram_set.add(quag)
         dis1 = len(unigram_set) / len(outs) #unigram_count
         dis2 = len(bigram_set) / len(outs) #bigram_count
-        dis3 = len(trigram_set)/len(outs) #trigram_count
-        dis4 = len(quagram_set)/len(outs) #quagram_count
+        dis3 = len(trigram_set)/ len(outs) #trigram_count
+        dis4 = len(quagram_set)/ len(outs) #quagram_count
         return dis1, dis2, dis3, dis4
 
     def rollout_recall(self, pred, actual):

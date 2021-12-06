@@ -21,10 +21,10 @@ def main():
     print('[START]', start_time, '='*30)
 
     # RL configuration
-    folder = 'gauss_sys_sl_wm'
-    epoch_id = '42'
+    folder = 'gauss_sys_sl'
+    epoch_id = '16-rec'
     env = 'gpu'
-    sim_epoch_id = '49'
+    sim_epoch_id = '41'
     simulator_folder = 'usr_sl'
     exp_dir = os.path.join('config_log_model', folder, 'rl-' + start_time)
     if not os.path.exists(exp_dir):
@@ -64,6 +64,8 @@ def main():
         random_seed = 0,
         use_latent_rl=True
     )
+
+
 
     # save configuration
     with open(rl_config.rl_config_path, 'w') as f:
@@ -111,10 +113,11 @@ def main():
     dialog_eval = Dialog([sys, usr], rl_config, user_sent, sys_sent)
     ctx_gen_eval = ContextGeneratorEval(rl_config.selfplay_eval_path)
 
+    
     # start RL
-    reinforce = Reinforce(dialog, ctx_gen, corpus, sv_config, sys_model, usr_model, rl_config, dialog_eval,
-                          ctx_gen_eval)
-    reinforce.run()
+    # reinforce = Reinforce(dialog, ctx_gen, corpus, sv_config, sys_model, usr_model, rl_config, dialog_eval,
+    #                       ctx_gen_eval)
+    # reinforce.run()
 
     # save sys model
     th.save(sys_model.state_dict(), rl_config.rl_model_path)

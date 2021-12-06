@@ -45,7 +45,7 @@ class HRED(BaseModel):
         self.embedding = nn.Embedding(self.vocab_size, config.embed_size, padding_idx=self.pad_id)
         self.utt_encoder = RnnUttEncoder(vocab_size=self.vocab_size,
                                          embedding_dim=config.embed_size,
-                                         feat_size=1,
+                                         feat_size=0,
                                          goal_nhid=config.goal_nhid,
                                          rnn_cell=config.utt_rnn_cell,
                                          utt_cell_size=config.utt_cell_size,
@@ -78,7 +78,7 @@ class HRED(BaseModel):
 
         self.decoder = DecoderRNN(input_dropout_p=config.dropout,
                                   rnn_cell=config.dec_rnn_cell,
-                                  input_size=config.embed_size + config.goal_nhid,
+                                  input_size=config.embed_size,
                                   hidden_size=config.dec_cell_size,
                                   num_layers=config.num_layers,
                                   output_dropout_p=config.dropout,
@@ -93,24 +93,42 @@ class HRED(BaseModel):
                                   max_dec_len=config.max_dec_len,
                                   embedding=self.embedding)
         self.nll = NLLEntropy(self.pad_id, config.avg_type)
+        self.w_matrix = nn.Parameter(th.randn(256, 128, device='cuda'))
+        self.kg = pd.read_csv(self.config.kg_path, header = None)
+        self.kg = self.kg.astype({128: int})
 
-    def forward(self, data_feed, mode, clf=False, gen_type='greedy', use_py=None, return_latent=False):
+    def forward(self, config, task, data_feed, mode, clf=False, gen_type='greedy', use_py=None, return_latent=False):
         clf = False
         if not clf:
             ctx_lens = data_feed['context_lens']  # (batch_size, )cc
             ctx_utts = self.np2var(data_feed['contexts'], LONG)  # (batch_size, max_ctx_len, max_utt_len)
-            ctx_confs = self.np2var(data_feed['context_confs'], FLOAT)  # (batch_size, max_ctx_len)
             out_utts = self.np2var(data_feed['outputs'], LONG)  # (batch_size, max_out_len)
+            usr_mention = data_feed['usr_mention']
+            sys_mention = data_feed['sys_mention']
+            movies = data_feed['movies']
+            movies_batch = []
+            for mov in movies:
+              movie = dict()
+              for i in range(len(mov)//4):
+                  movie[mov[i*4]] = {}
+                  movie[mov[i*4]]['suggested'] = mov[i*4+1]
+                  movie[mov[i*4]]['seen'] = mov[i*4+2]
+                  movie[mov[i*4]]['liked'] = mov[i*4+3]
+              movies_batch.append(movie)
+            # print(movies_batch)
+            # print("Hello")
+            # print(len(data_feed['sys_mention']))  # (batch_size, max_out_len)
             # goals = self.np2var(data_feed['goals'], LONG)  # (batch_size, goal_len)
             batch_size = len(ctx_lens)
             # if self.person == "user":
             #   goals_h = th.zeros((batch_size, 128), device='cuda')
             # elif self.person == "system":
             #   goals_h = self.np2var(data_feed['usr_mention'], FLOAT)
+
             goals_h = th.zeros((batch_size, 128), device='cuda')
-            # encode goal info
-            enc_inputs, _, _ = self.utt_encoder(ctx_utts, feats=ctx_confs,
-                                                goals=goals_h)  # (batch_size, max_ctx_len, num_directions*utt_cell_size)
+
+            enc_inputs, _, _ = self.utt_encoder(ctx_utts, goals=None)
+            # (batch_size, max_ctx_len, num_directions*utt_cell_size)
 
             # enc_outs: (batch_size, max_ctx_len, ctx_cell_size)
             # enc_last: tuple, (h_n, c_n)
@@ -120,6 +138,12 @@ class HRED(BaseModel):
 
             # get decoder inputs
             dec_inputs = out_utts[:, :-1]
+            # print(ctx_utts[0])
+            # print(out_utts[0])
+            # print(usr_mention[0])
+            # print(sys_mention[0])
+            # print(movies[0])
+            # print(dec_inputs[0])
             labels = out_utts[:, 1:].contiguous()
 
             # pack attention context
@@ -131,6 +155,10 @@ class HRED(BaseModel):
             # create decoder initial states
             dec_init_state = self.connector(enc_last)
 
+            mode2 = mode
+            if task == "rec":
+              mode2 = GEN
+
             # decode
             dec_outputs, dec_hidden_state, ret_dict = self.decoder(batch_size=batch_size,
                                                                    dec_inputs=dec_inputs,
@@ -138,22 +166,91 @@ class HRED(BaseModel):
                                                                    dec_init_state=dec_init_state,  # tuple: (h, c)
                                                                    attn_context=attn_context,
                                                                    # (batch_size, max_ctx_len, ctx_cell_size)
-                                                                   mode=mode,
+                                                                   mode=mode2,
                                                                    gen_type=gen_type,
                                                                    beam_size=self.config.beam_size,
                                                                    goal_hid=goals_h)  # (batch_size, goal_nhid)
 
             
-            # print(ret_dict)
-            # print(labels)
+            if task == "conv":
+              if mode == GEN:
+                  return ret_dict, labels
+              if return_latent:
+                  return Pack(nll=self.nll(dec_outputs, labels),
+                              latent_action=dec_init_state)
+              else:
+                  return Pack(nll=self.nll(dec_outputs, labels))
 
-            if mode == GEN:
-                return ret_dict, labels
-            if return_latent:
-                return Pack(nll=self.nll(dec_outputs, labels),
-                            latent_action=dec_init_state)
-            else:
-                return Pack(nll=self.nll(dec_outputs, labels))
+            if task == "rec":
+              # print(mode)
+              # print(ret_dict[DecoderRNN.KEY_SEQUENCE])
+              if len(ret_dict[DecoderRNN.KEY_SEQUENCE]) > 0:
+                de_tknize = get_detokenize()
+                outputs = ret_dict
+                labels = labels.cpu()
+                pred_labels = [t.cpu().data.numpy() for t in outputs[DecoderRNN.KEY_SEQUENCE]]
+
+                pred_labels = np.array(pred_labels, dtype=int).squeeze(-1).swapaxes(0, 1) # (batch_size, max_dec_len)
+                true_labels = labels.data.numpy() # (batch_size, output_seq_len)
+
+                # get attention if possible
+                if config.dec_use_attn:
+                    pred_attns = [t.cpu().data.numpy() for t in outputs[DecoderRNN.KEY_ATTN_SCORE]]
+                    pred_attns = np.array(pred_attns, dtype=float).squeeze(2).swapaxes(0, 1) # (batch_size, max_dec_len, max_ctx_len)
+                else:
+                    pred_attns = None
+                # get context
+                ctx = data_feed.get('contexts') # (batch_size, max_ctx_len, max_utt_len)
+                ctx_len = data_feed.get('context_lens') # (batch_size, )
+                # print(pred_labels.shape)
+                loss_total = 0
+                loss_len = 0
+
+                for b_id in range(pred_labels.shape[0]):
+                    # TODO attn
+                    pred_str = get_sent(self.vocab, de_tknize, pred_labels, b_id) 
+                    # true_str = get_sent(self.vocab, de_tknize, true_labels, b_id)
+
+                    z = dec_init_state
+                    # if '[ITEM]' in true_str and 
+                    if '[ITEM]' in pred_str:
+                    # print(movies_batch[b_id])
+                      t = z[0][b_id]
+                      t = t[None, None, :]
+
+                      embed, m_id, loss = softmax_func(t, movies_batch[b_id], self.kg, self.w_matrix, True)
+                      # print(m_id)
+                      if loss != -1:
+                        loss_total = loss_total + loss
+                        loss_len = loss_len + 1
+                if loss_len == 0:
+                    # CHECK LATER
+                    print("loss_len = 0")
+                    target = th.tensor([0., 1.]).to(device="cuda")
+                    input1 = th.tensor([1., 1.]).to(device="cuda")
+                    loss_total = nn.BCELoss()(target, input1)
+                    loss_len = 1
+                    loss_total.requires_grad = True
+                avg_loss = loss_total / loss_len
+                # print(loss_total)
+                # print(avg_loss)
+                if mode == GEN:
+                  return ret_dict, labels
+                else:
+                  return avg_loss
+              else:
+                print("error")
+                # if "[ITEM]" in pred_str:
+                #   embed, m_id = self.softmax_func(z, profile, kg)
+
+
+                # if mode == GEN:
+                #   ret_dict['sample_z'] = sample_z
+                #   return dec_init_state, self.w_matrix, ret_dict, mention, movies
+                # else: 
+                #   return
+
+                return
 
 
 
@@ -205,7 +302,7 @@ class GaussHRED(BaseModel):
 
         self.decoder = DecoderRNN(input_dropout_p=config.dropout,
                                   rnn_cell=config.dec_rnn_cell,
-                                  input_size=config.embed_size + config.goal_nhid,
+                                  input_size=config.embed_size,
                                   hidden_size=config.dec_cell_size,
                                   num_layers=config.num_layers,
                                   output_dropout_p=config.dropout,
@@ -264,9 +361,6 @@ class GaussHRED(BaseModel):
 
 
     def forward(self, config, task, data_feed, mode, clf=False, gen_type='greedy', use_py=None, return_latent=False):
-        
-
-
         ctx_lens = data_feed['context_lens']  # (batch_size, )cc
         ctx_utts = self.np2var(data_feed['contexts'], LONG)  # (batch_size, max_ctx_len, max_utt_len)
         out_utts = self.np2var(data_feed['outputs'], LONG)  # (batch_size, max_out_len)
@@ -293,7 +387,7 @@ class GaussHRED(BaseModel):
         #   goals_h = self.np2var(data_feed['usr_mention'], FLOAT)
         goals_h = th.zeros((batch_size, 128), device='cuda')
 
-        enc_inputs, _, _ = self.utt_encoder(ctx_utts, goals=goals_h)
+        enc_inputs, _, _ = self.utt_encoder(ctx_utts, goals=None)
         # (batch_size, max_ctx_len, num_directions*utt_cell_size)
 
         # enc_outs: (batch_size, max_ctx_len, ctx_cell_size)
@@ -320,7 +414,7 @@ class GaussHRED(BaseModel):
         else:
             p_mu, p_logvar = self.c2z(enc_last)
             # encode response and use posterior to find q(z|x, c)
-            x_h, _, _ = self.utt_encoder(out_utts.unsqueeze(1),  goals=goals_h)
+            x_h, _, _ = self.utt_encoder(out_utts.unsqueeze(1),  goals=None)
             q_mu, q_logvar = self.xc2z(th.cat([enc_last, x_h.squeeze(1).unsqueeze(0)], dim=2))
 
             # use prior at inference time, otherwise use posterior
@@ -396,22 +490,32 @@ class GaussHRED(BaseModel):
             for b_id in range(pred_labels.shape[0]):
                 # TODO attn
                 pred_str = get_sent(self.vocab, de_tknize, pred_labels, b_id) 
-                true_str = get_sent(self.vocab, de_tknize, true_labels, b_id)
+                # true_str = get_sent(self.vocab, de_tknize, true_labels, b_id)
 
                 z = dec_init_state
-                # if '[ITEM]' in true_str and '[ITEM]' in pred_str:
+                # if '[ITEM]' in true_str and 
+                if '[ITEM]' in pred_str:
                 # print(movies_batch[b_id])
-                t = z[0][b_id]
-                t = t[None, None, :]
+                  t = z[0][b_id]
+                  t = t[None, None, :]
 
-                embed, m_id, loss = softmax_func(t, movies_batch[b_id], self.kg, self.w_matrix, True)
-                # print(m_id)
-                if loss != -1:
-                  loss_total = loss_total + loss
-                  loss_len = loss_len + 1
+                  embed, m_id, loss = softmax_func(t, movies_batch[b_id], self.kg, self.w_matrix, True)
+                  # print(m_id)
+                  if loss != -1:
+                    loss_total = loss_total + loss
+                    loss_len = loss_len + 1
+            if loss_len == 0:
+                # CHECK LATER
+                print("loss_len = 0")
+                target = th.tensor([0., 1.]).to(device="cuda")
+                input1 = th.tensor([1., 1.]).to(device="cuda")
+                loss_total = nn.BCELoss()(target, input1)
+                loss_len = 1
+                loss_total.requires_grad = True
             avg_loss = loss_total / loss_len
+
             # print(loss_total)
-            # print(avg_loss)
+            # print(mode)
             if mode == GEN:
               ret_dict['sample_z'] = sample_z
               return ret_dict, labels
@@ -419,17 +523,18 @@ class GaussHRED(BaseModel):
               return avg_loss
           else:
             print("error")
+            return
             # if "[ITEM]" in pred_str:
             #   embed, m_id = self.softmax_func(z, profile, kg)
 
 
             # if mode == GEN:
-            #   ret_dict['sample_z'] = sample_z
+            #   ret_dict['samplec_z'] = sample_z
             #   return dec_init_state, self.w_matrix, ret_dict, mention, movies
             # else: 
             #   return
 
-          return
+          
 
         
 
@@ -484,7 +589,7 @@ class CatHRED(BaseModel):
 
         self.decoder = DecoderRNN(input_dropout_p=config.dropout,
                                   rnn_cell=config.dec_rnn_cell,
-                                  input_size=config.embed_size + config.goal_nhid,
+                                  input_size=config.embed_size,
                                   hidden_size=config.dec_cell_size,
                                   num_layers=config.num_layers,
                                   output_dropout_p=config.dropout,
@@ -502,6 +607,10 @@ class CatHRED(BaseModel):
         self.nll = NLLEntropy(self.pad_id, config.avg_type)
         self.cat_kl_loss = criterions.CatKLLoss()
         self.entropy_loss = criterions.Entropy()
+        self.zero = utils.cast_type(th.zeros(1), FLOAT, self.use_gpu)
+        self.w_matrix = nn.Parameter(th.randn(256, 128, device='cuda'))
+        self.kg = pd.read_csv(self.config.kg_path, header = None)
+        self.kg = self.kg.astype({128: int})
 
         self.log_uniform_y = Variable(th.log(th.ones(1) / config.k_size))
         if self.use_gpu:
@@ -543,14 +652,30 @@ class CatHRED(BaseModel):
 
         return dec_init_state, attn_context, logprob_z
 
-    def forward(self, data_feed, mode, clf=False, gen_type='greedy', use_py=None, return_latent=False):
+    def forward(self, config, task, data_feed, mode, clf=False, gen_type='greedy', use_py=None, return_latent=False):
+        
         ctx_lens = data_feed['context_lens']  # (batch_size, )cc
         ctx_utts = self.np2var(data_feed['contexts'], LONG)  # (batch_size, max_ctx_len, max_utt_len)
         out_utts = self.np2var(data_feed['outputs'], LONG)  # (batch_size, max_out_len)
+        usr_mention = data_feed['usr_mention']
+        sys_mention = data_feed['sys_mention']
+        movies = data_feed['movies']
+        movies_batch = []
+        for mov in movies:
+          movie = dict()
+          for i in range(len(mov)//4):
+              movie[mov[i*4]] = {}
+              movie[mov[i*4]]['suggested'] = mov[i*4+1]
+              movie[mov[i*4]]['seen'] = mov[i*4+2]
+              movie[mov[i*4]]['liked'] = mov[i*4+3]
+          movies_batch.append(movie)
+        # print(movies_batch)
+        # print("Hello")
+        # print(len(data_feed['sys_mention']))  # (batch_size, max_out_len)
         # goals = self.np2var(data_feed['goals'], LONG)  # (batch_size, goal_len)
         batch_size = len(ctx_lens)
         # if self.person == "user":
-        #   goals_h = th.zeros((batch_size, 128), device='cuda')
+        #   goals_hc = th.zeros((batch_size, 128), device='cuda')
         # elif self.person == "system":
         #   goals_h = self.np2var(data_feed['usr_mention'], FLOAT)
         goals_h = th.zeros((batch_size, 128), device='cuda')
@@ -598,6 +723,10 @@ class CatHRED(BaseModel):
             attn_context = None
             dec_init_state = self.z_embedding(sample_y.view(1, -1, self.config.y_size * self.config.k_size))
 
+        mode2 = mode
+        if task == "rec":
+          mode2 = GEN
+
         # decode
         dec_outputs, dec_hidden_state, ret_dict = self.decoder(batch_size=batch_size,
                                                                dec_inputs=dec_inputs,
@@ -605,24 +734,98 @@ class CatHRED(BaseModel):
                                                                dec_init_state=dec_init_state,  # tuple: (h, c)
                                                                attn_context=attn_context,
                                                                # (batch_size, max_ctx_len, ctx_cell_size)
-                                                               mode=mode,
+                                                               mode=mode2,
                                                                gen_type=gen_type,
                                                                beam_size=self.config.beam_size,
                                                                goal_hid=goals_h)  # (batch_size, goal_nhid)
 
 
-        if mode == GEN:
-            return ret_dict, labels
-        else:
-            # regularization qy to be uniform
-            avg_log_qy = th.exp(log_qy.view(-1, self.config.y_size, self.config.k_size))
-            avg_log_qy = th.log(th.mean(avg_log_qy, dim=0) + 1e-15)
-            mi = self.entropy_loss(avg_log_qy, unit_average=True) - self.entropy_loss(log_qy, unit_average=True)
-            pi_kl = self.cat_kl_loss(log_qy, log_py, batch_size, unit_average=True)
-            pi_h = self.entropy_loss(log_qy, unit_average=True)
-            results = Pack(nll=self.nll(dec_outputs, labels), mi=mi, pi_kl=pi_kl, pi_h=pi_h)
+        if task == "conv":
+          if mode == GEN:
+              return ret_dict, labels
+          else:
+              # regularization qy to be uniform
+              avg_log_qy = th.exp(log_qy.view(-1, self.config.y_size, self.config.k_size))
+              avg_log_qy = th.log(th.mean(avg_log_qy, dim=0) + 1e-15)
+              mi = self.entropy_loss(avg_log_qy, unit_average=True) - self.entropy_loss(log_qy, unit_average=True)
+              pi_kl = self.cat_kl_loss(log_qy, log_py, batch_size, unit_average=True)
+              pi_h = self.entropy_loss(log_qy, unit_average=True)
+              results = Pack(nll=self.nll(dec_outputs, labels), mi=mi, pi_kl=pi_kl, pi_h=pi_h)
 
-            if return_latent:
-                results['latent_action'] = dec_init_state
+              if return_latent:
+                  results['latent_action'] = dec_init_state
 
-            return results
+              return results
+        if task == "rec":
+          # print(mode)
+          # print(ret_dict[DecoderRNN.KEY_SEQUENCE])
+          if len(ret_dict[DecoderRNN.KEY_SEQUENCE]) > 0:
+            de_tknize = get_detokenize()
+            ret_dict['sample_z'] = sample_z
+            outputs = ret_dict
+            labels = labels.cpu()
+            pred_labels = [t.cpu().data.numpy() for t in outputs[DecoderRNN.KEY_SEQUENCE]]
+
+            pred_labels = np.array(pred_labels, dtype=int).squeeze(-1).swapaxes(0, 1) # (batch_size, max_dec_len)
+            true_labels = labels.data.numpy() # (batch_size, output_seq_len)
+
+            # get attention if possible
+            if config.dec_use_attn:
+                pred_attns = [t.cpu().data.numpy() for t in outputs[DecoderRNN.KEY_ATTN_SCORE]]
+                pred_attns = np.array(pred_attns, dtype=float).squeeze(2).swapaxes(0, 1) # (batch_size, max_dec_len, max_ctx_len)
+            else:
+                pred_attns = None
+            # get context
+            ctx = data_feed.get('contexts') # (batch_size, max_ctx_len, max_utt_len)
+            ctx_len = data_feed.get('context_lens') # (batch_size, )
+            # print(pred_labels.shape)
+            loss_total = 0
+            loss_len = 0
+
+            for b_id in range(pred_labels.shape[0]):
+                # TODO attn
+                pred_str = get_sent(self.vocab, de_tknize, pred_labels, b_id) 
+                # true_str = get_sent(self.vocab, de_tknize, true_labels, b_id)
+
+                z = dec_init_state
+                # if '[ITEM]' in true_str and 
+                if '[ITEM]' in pred_str:
+                # print(movies_batch[b_id])
+                  t = z[0][b_id]
+                  t = t[None, None, :]
+
+                  embed, m_id, loss = softmax_func(t, movies_batch[b_id], self.kg, self.w_matrix, True)
+                  # print(m_id)
+                  if loss != -1:
+                    loss_total = loss_total + loss
+                    loss_len = loss_len + 1
+            if loss_len == 0:
+                # CHECK LATER
+                print("loss_len = 0")
+                target = th.tensor([0., 1.]).to(device="cuda")
+                input1 = th.tensor([1., 1.]).to(device="cuda")
+                loss_total = nn.BCELoss()(target, input1)
+                loss_len = 1
+                loss_total.requires_grad = True
+            avg_loss = loss_total / loss_len
+
+            # print(loss_total)
+            # print(mode)
+            if mode == GEN:
+              return ret_dict, labels
+            else:
+              return avg_loss
+          else:
+            print("error")
+            return
+            # if "[ITEM]" in pred_str:
+            #   embed, m_id = self.softmax_func(z, profile, kg)
+
+
+            # if mode == GEN:
+            #   ret_dict['samplec_z'] = sample_z
+            #   return dec_init_state, self.w_matrix, ret_dict, mention, movies
+            # else: 
+            #   return
+
+          

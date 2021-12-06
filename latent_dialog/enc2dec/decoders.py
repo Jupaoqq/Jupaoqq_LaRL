@@ -208,13 +208,13 @@ class DecoderRNN(BaseRNN):
         embedded = self.embedding(input_var) # (batch_size, output_seq_len, embedding_dim)
 
         # add goals
-        if goal_hid is not None:
-            goal_hid = goal_hid.view(goal_hid.size(0), 1, goal_hid.size(1)) # (batch_size, 1, goal_nhid)
-            goal_rep = goal_hid.repeat(1, output_seq_len, 1) # (batch_size, output_seq_len, goal_nhid)
-            # print("shape")
-            # print(embedded.shape)
-            # print(goal_rep.shape)
-            embedded = th.cat([embedded, goal_rep], dim=2) # (batch_size, output_seq_len, embedding_dim+goal_nhid)
+        # if goal_hid is not None:
+        #     goal_hid = goal_hid.view(goal_hid.size(0), 1, goal_hid.size(1)) # (batch_size, 1, goal_nhid)
+        #     goal_rep = goal_hid.repeat(1, output_seq_len, 1) # (batch_size, output_seq_len, goal_nhid)
+        #     # print("shape")
+        #     # print(embedded.shape)
+        #     # print(goal_rep.shape)
+        #     embedded = th.cat([embedded, goal_rep], dim=2) # (batch_size, output_seq_len, embedding_dim+goal_nhid)
 
         embedded = self.input_dropout(embedded)
 
@@ -245,10 +245,10 @@ class DecoderRNN(BaseRNN):
         batch_size, output_seq_len = input_var.size()
         embedded = self.embedding(input_var) # (1, 1, embedding_dim)
 
-        if goal_hid is not None:
-            goal_hid = goal_hid.view(goal_hid.size(0), 1, goal_hid.size(1)) # (1, 1, goal_nhid)
-            goal_rep = goal_hid.repeat(1, output_seq_len, 1) # (1, 1, goal_nhid)
-            embedded = th.cat([embedded, goal_rep], dim=2) # (1, 1, embedding_dim+goal_nhid)
+        # if goal_hid is not None:
+        #     goal_hid = goal_hid.view(goal_hid.size(0), 1, goal_hid.size(1)) # (1, 1, goal_nhid)
+        #     goal_rep = goal_hid.repeat(1, output_seq_len, 1) # (1, 1, goal_nhid)
+        #     embedded = th.cat([embedded, goal_rep], dim=2) # (1, 1, embedding_dim+goal_nhid)
 
         embedded = self.input_dropout(embedded)
 

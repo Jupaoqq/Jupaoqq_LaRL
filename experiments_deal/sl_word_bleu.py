@@ -11,7 +11,7 @@ from latent_dialog.corpora import DealCorpus
 from latent_dialog.data_loaders import DealDataLoaders
 from latent_dialog.evaluators import BleuEvaluator
 from latent_dialog.models_deal import HRED
-from latent_dialog.main import train, validate, generate
+from latent_dialog.main_bleu import train, validate, generate
 import latent_dialog.domain as domain
 
 
@@ -38,7 +38,7 @@ config = Pack(
     last_n_model = 4, 
     max_utt_len = 20,
     backward_size = 14, 
-    batch_size = 16, 
+    batch_size = 32, 
     use_gpu = True,
     op = 'adam', 
     init_lr = 0.001, 
@@ -85,7 +85,7 @@ set_seed(config.random_seed)
 
 if mode == "rec_only": 
     saved_path = os.path.join(stats_path, config.pretrain_folder)
-    config = Pack(json.load(open(os.path.join(saved_path, 'config.json'))))
+    # config = Pack(json.load(open(os.path.join(saved_path, 'config.json'))))
     config['forward_only'] = True
 else:
     saved_path = os.path.join(stats_path, start_time+'-'+os.path.basename(__file__).split('.')[0])
@@ -117,27 +117,6 @@ if config.use_gpu:
     model.cuda()
 
 best_epoch = None
-if mode != "rec_only":
-    task = "conv"
-    try:
-        best_epoch = train(model, train_data, val_data, test_data, config, evaluator, task, gen=generate, )
-    except KeyboardInterrupt:
-        print('Training stopped by keyboard.')
-
-    config.batch_size = 32
-    if best_epoch is None:
-        model_ids = sorted([int(p.replace('-model', '')) for p in os.listdir(saved_path) if '-model' in p])
-        best_epoch = model_ids[-1]
-
-    model.load_state_dict(th.load(os.path.join(saved_path, '{}-model'.format(best_epoch))))
-    logger.info("Load model {}".format(best_epoch))
-    logger.info("Forward Only Evaluation")
-    # run the model on the test dataset
-    validate(task, model, val_data, config)
-    validate(task, model, test_data, config)
-
-    with open(os.path.join(saved_path, '{}_test_file.txt'.format(start_time)), 'w') as f:
-        generate(task, model, test_data, config, evaluator, num_batch=None, dest_f=f)
 
 if config.person != "user" and mode != "conv_only":
     config.max_epoch = 20
@@ -151,22 +130,6 @@ if config.person != "user" and mode != "conv_only":
         best_epoch2 = train(model, train_data, val_data, test_data, config, evaluator, task, gen=generate)
     except KeyboardInterrupt:
         print('Training stopped by keyboard.')
-
-    config.batch_size = 32
-    if best_epoch2 is None:
-        model_ids = sorted([int(p.replace('-rec-model', '')) for p in os.listdir(saved_path) if '-rec-model' in p])
-        best_epoch2 = model_ids[-1]
-
-    model.load_state_dict(th.load(os.path.join(saved_path, '{}-rec-model'.format(best_epoch2))))
-    logger.info("Load model {}".format(best_epoch2))
-    logger.info("Forward Only Evaluation")
-    # run the model on the test dataset
-    validate(task, model, val_data, config)
-    validate(task, model, test_data, config)
-
-# with open(os.path.join(saved_path, '{}_test_file.txt'.format(start_time)), 'w') as f:
-#     generate(model, test_data, config, evaluator, num_batch=None, dest_f=f)
-
 
 
 end_time = time.strftime('%Y-%m-%d-%H-%M-%S', time.localtime(time.time()))

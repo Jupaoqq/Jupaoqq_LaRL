@@ -69,303 +69,16 @@ class LossManager(object):
         return np.mean(self.backward_losses)
 
 
-class Reinforce(object):
-    def __init__(self, dialog, ctx_gen, corpus, sv_config, sys_model, usr_model, rl_config, dialog_eval, ctx_gen_eval):
-        self.dialog = dialog
-        self.ctx_gen = ctx_gen
-        self.corpus = corpus
-        self.sv_config = sv_config
-        self.sys_model = sys_model
-        self.usr_model = usr_model
-        self.rl_config = rl_config
-        self.dialog_eval = dialog_eval
-        self.ctx_gen_eval = ctx_gen_eval
-
-        # training data for supervised learning
-        train_dial, val_dial, test_dial = self.corpus.get_corpus()
-        self.train_data = DealDataLoaders('Train', train_dial, self.sv_config)
-        self.val_data = DealDataLoaders('Val', val_dial, self.sv_config)
-        self.test_data = DealDataLoaders('Test', test_dial, self.sv_config)
-
-        # training func for supervised learning
-        self.train_func = train_single_batch
-
-        # recording func
-        self.record_func = record
-        if self.rl_config.record_freq > 0:
-            self.ppl_exp_file = open(os.path.join(self.rl_config.record_path, 'ppl.tsv'), 'w')
-            self.rl_exp_file = open(os.path.join(self.rl_config.record_path, 'rl.tsv'), 'w')
-            self.learning_exp_file = open(os.path.join(self.rl_config.record_path, 'learning.tsv'), 'w')
-
-        # evaluation
-        self.validate_func = validate
-        self.evaluator = evaluators.BleuEvaluator('Deal')
-        self.generate_func = generate
-        # with open(rl_config.entity_path) as f:
-        #     self.entity = [line.rstrip() for line in f]
-            
-        self.kg = pd.read_csv(rl_config.kg_path, header = None)
-        self.kg = self.kg.astype({128: int})
-        # print(self.kg)
-
-    def run(self):
-        n = 0
-        best_valid_loss = np.inf
-        best_rl_reward = 0
-
-        # BEFORE RUN, RECORD INITIAL PERFORMANCE
-        self.record_func(n, self.sys_model, self.test_data, self.sv_config, self.usr_model, self.ppl_exp_file,
-                         self.dialog_eval, self.ctx_gen_eval, self.rl_exp_file, self.kg)
-
-        for ctxs in self.ctx_gen.iter(self.rl_config.nepoch):
-            n += 1
-            if n % 20 == 0:
-                print('='*15, '{}/{}'.format(n, self.ctx_gen.total_size(self.rl_config.nepoch)))
-
-            # # supervised learning
-            if self.rl_config.sv_train_freq > 0 and n % self.rl_config.sv_train_freq == 0:
-                print('-'*15, 'Supervised Learning', '-'*15)
-                self.train_func(self.sys_model, self.train_data, self.sv_config)
-                # print('-'*15)
-
-            # roll out and learn
-
-            # self.dialog.run(ctxs, self.kg, verbose=True)
-            _, rl_reward, rl_stats = self.dialog.run(ctxs, self.kg, verbose=n % self.rl_config.record_freq == 0)
-            # print("finished")
-
-            # record model performance in terms of several evaluation metrics
-            if self.rl_config.record_freq > 0 and n % self.rl_config.record_freq == 0:
-                # TEST ON TRAINING DATA
-                rl_stats = validate_rl(self.dialog_eval, self.ctx_gen, self.kg, num_episode=400)
-                self.learning_exp_file.write('{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n'.format(n, rl_stats['sys_rew'],
-                                                                      rl_stats['recall@1'],
-                                                                      rl_stats['recall@5'],
-                                                                      rl_stats['recall@10'],
-                                                                      rl_stats['dist-1'],
-                                                                      rl_stats['dist-2'],
-                                                                      rl_stats['dist-3'],
-                                                                      rl_stats['dist-4']))
-                self.learning_exp_file.flush()
-                aver_reward = rl_stats['sys_rew']
-
-                # TEST ON HELD-HOLD DATA
-                print('-'*15, 'Recording start', '-'*15)
-                self.record_func(n, self.sys_model, self.test_data, self.sv_config, self.usr_model, self.ppl_exp_file,
-                                 self.dialog_eval, self.ctx_gen_eval, self.rl_exp_file, self.kg)
-
-                # SAVE MODEL BASED on REWARD
-                if aver_reward > best_rl_reward:
-                    print('[INFO] Update on reward in Epsd {} ({} > {})'.format(n, aver_reward, best_rl_reward))
-                    th.save(self.sys_model.state_dict(), self.rl_config.reward_best_model_path)
-                    best_rl_reward = aver_reward
-                else:
-                    print('[INFO] No update on reward in Epsd {} ({} < {})'.format(n, aver_reward, best_rl_reward))
-
-                print('-'*15, 'Recording end', '-'*15)
-
-            # print('='*15, 'Episode {} end'.format(n), '='*15)
-            if self.rl_config.nepisode > 0 and n > self.rl_config.nepisode:
-                print('-'*15, 'Stop from config', '-'*15)
-                break
-
-        print("$$$ Load {}-model".format(self.rl_config.reward_best_model_path))
-        self.sv_config.batch_size = 32
-        self.sys_model.load_state_dict(th.load(self.rl_config.reward_best_model_path))
-        task = "conv"
-        validate(task, self.sys_model, self.val_data, self.sv_config)
-        validate(task, self.sys_model, self.test_data, self.sv_config)
-        
-        with open(os.path.join(self.rl_config.record_path, 'valid_file.txt'), 'w') as f:
-            self.generate_func(task, self.sys_model, self.val_data, self.sv_config, self.evaluator, num_batch=None,
-                               dest_f=f)
-
-        with open(os.path.join(self.rl_config.record_path, 'test_file.txt'), 'w') as f:
-            self.generate_func(task, self.sys_model, self.test_data, self.sv_config, self.evaluator, num_batch=None,
-                               dest_f=f)
-
-
-def validate_rl(dialog_eval, ctx_gen, kg, num_episode=200):
-    print("Validate on training goals for {} episode".format(num_episode))
-    reward_list = []
-    # sys_unique_ = []
-    recall1_ = []
-    recall5_ = []
-    recall10_ = []
-    dist1_ = []
-    dist2_ = []
-    dist3_ = []
-    dist4_ = []
-    # sent_metric = UniquenessSentMetric()
-    # word_metric = UniquenessWordMetric()
-    for i in range(num_episode):
-        ctxs = ctx_gen.sample()
-        conv, rewards, stats = dialog_eval.run(ctxs, kg, update = False, verbose= i % 100 == 0)
-        # true_reward = rewards[0]
-        # print("Conv-val_rl")
-        # print(conv)
-        reward_list.append(stats['system_rew'])
-        # sys_unique_.append(stats['system_unique'])
-        recall1_.append(stats['recall@1'])
-        recall5_.append(stats['recall@5'])
-        recall10_.append(stats['recall@10'])
-        dist1_.append(stats['dist-1'])
-        dist2_.append(stats['dist-2'])
-        dist3_.append(stats['dist-3'])
-        dist4_.append(stats['dist-4'])
-        # for turn in conv:
-        #     if turn[0] == 'System':
-        #         sent_metric.record(turn[1])
-        #         word_metric.record(turn[1])
-    r = np.array(reward_list).astype(np.float)
-    # s = np.array(sys_unique_).astype(np.float)
-    ra1 = np.array(recall1_).astype(np.float)
-    ra5 = np.array(recall5_).astype(np.float)
-    ra10 = np.array(recall10_).astype(np.float)
-    d1 = np.array(dist1_).astype(np.float)
-    d2 = np.array(dist2_).astype(np.float)
-    d3 = np.array(dist3_).astype(np.float)
-    d4 = np.array(dist4_).astype(np.float)
-    results = {'sys_rew': np.average(r), 'recall@1': np.average(ra1), 'recall@5': np.average(ra5), 'recall@10': np.average(ra10), 'dist-1': np.average(d1), 'dist-2': np.average(d2), 'dist-3': np.average(d3), 'dist-4': np.average(d4)}
-
-    # 'sys_rew': np.average(reward_list),
-    #            'sys_sent_unique': sent_metric.value(),
-    #            'sys_unique': word_metric.value()}
-    return results
-
-
-def train_single_batch(task, model, train_data, config):
-    batch_cnt = 0
-    optimizer = model.get_optimizer(config, verbose=False)
-    model.train()
-    
-    # decoding CE
-    train_data.epoch_init(config, shuffle=True, verbose=False)
-    for i in range(16):
-        batch = train_data.next_batch()
-        if batch is None:
-            train_data.epoch_init(config, shuffle=True, verbose=False)
-            batch = train_data.next_batch()
-        optimizer.zero_grad()
-        loss = model(config, task, batch, mode=TEACH_FORCE)
-        model.backward(loss, batch_cnt)
-        nn.utils.clip_grad_norm_(model.parameters(), config.grad_clip)
-        optimizer.step()
 
 def train(model, train_data, val_data, test_data, config, evaluator, task, gen=None):
-    print(task)
-    if task == "rec":
-        for name, param in model.named_parameters(): 
-            if name != "w_matrix":
-                param.requires_grad = False
-            else:
-                param.requires_grad = True
-    else:
-        for name, param in model.named_parameters(): 
-            if name == "w_matrix":
-                param.requires_grad = False
-            else:
-                param.requires_grad = True
-    for name, param in model.named_parameters(): 
-        if param.requires_grad: 
-            print(name)
-    # print(task)
-    patience = 10
-    valid_loss_threshold = np.inf
-    best_valid_loss = np.inf
-    batch_cnt = 0
-    optimizer = model.get_optimizer(config)
-    done_epoch = 0
-    best_epoch = 0
-    train_loss = LossManager()
-    model.train()
-    logger.info(summary(model, show_weights=False))
-    saved_models = []
-    last_n_model = config.last_n_model if hasattr(config, 'last_n_model') else 5
-
-    logger.info('***** Training Begins at {} *****'.format(datetime.now().strftime("%Y-%m-%d %H-%M-%S")))
-    logger.info('***** Epoch 0/{} *****'.format(config.max_epoch))
-    while True:
-        train_data.epoch_init(config, shuffle=True, verbose=done_epoch==0, fix_batch=config.fix_train_batch)
-        while True:
-            batch = train_data.next_batch()
-            # print("batch")
-            # print(batch)
-            if batch is None:
-                break
-    
-            optimizer.zero_grad()
-            loss = model(config, task, batch, mode=TEACH_FORCE)
-            # print(loss)
-            model.backward(loss, batch_cnt, task)
-            nn.utils.clip_grad_norm_(model.parameters(), config.grad_clip)
-            optimizer.step()
-            batch_cnt += 1
-            train_loss.add_loss(task, loss)
-
-    
-            if batch_cnt % config.print_step == 0:
-                # print('Print step at {}'.format(datetime.now().strftime("%Y-%m-%d %H-%M-%S")))
-                logger.info(train_loss.pprint(task, 'Train',
-                                        window=config.print_step, 
-                                        prefix='{}/{}-({:.3f})'.format(batch_cnt%config.ckpt_step, config.ckpt_step, model.kl_w)))
-                sys.stdout.flush()
-    
-            if batch_cnt % config.ckpt_step == 0:
-                logger.info('Checkpoint step at {}'.format(datetime.now().strftime("%Y-%m-%d %H-%M-%S")))
-                logger.info('==== Evaluating Model ====')
-                logger.info(train_loss.pprint(task, 'Train'))
-                done_epoch += 1
-                logger.info('done epoch {} -> {}'.format(done_epoch-1, done_epoch))
-
-                # generation
-                if gen is not None:
-                    if task == "conv":
-                        gen(task, model, val_data, config, evaluator, num_batch=config.preview_batch_num)
-
-
-                # validation
-                valid_loss = validate(task, model, val_data, config, batch_cnt)
-                _ = validate(task, model, test_data, config, batch_cnt)
-
-                # update early stopping stats
-                if valid_loss < best_valid_loss:
-                    if valid_loss <= valid_loss_threshold * config.improve_threshold:
-                        patience = max(patience, done_epoch*config.patient_increase)
-                        valid_loss_threshold = valid_loss
-                        logger.info('Update patience to {}'.format(patience))
-    
-                    if config.save_model:
-                        cur_time = datetime.now().strftime("%Y-%m-%d %H-%M-%S")
-                        logger.info('!!Model Saved with loss = {},at {}.'.format(valid_loss, cur_time))
-                        if task == "conv":
-                            th.save(model.state_dict(), os.path.join(config.saved_path, '{}-model'.format(done_epoch)))
-                        else:
-                            th.save(model.state_dict(), os.path.join(config.saved_path, '{}-rec-model'.format(done_epoch)))
-                        best_epoch = done_epoch
-                        saved_models.append(done_epoch)
-                        if len(saved_models) > last_n_model:
-                            remove_model = saved_models[0]
-                            saved_models = saved_models[-last_n_model:]
-                            if task == "conv":
-                                os.remove(os.path.join(config.saved_path, "{}-model".format(remove_model)))
-                            else:
-                                os.remove(os.path.join(config.saved_path, "{}-rec-model".format(remove_model)))
-    
-                    best_valid_loss = valid_loss
-    
-                if done_epoch >= config.max_epoch \
-                        or config.early_stop and patience <= done_epoch:
-                    if done_epoch < config.max_epoch:
-                        logger.info('!!!!! Early stop due to run out of patience !!!!!')
-                    print('Best validation loss = %f' % (best_valid_loss, ))
-                    return best_epoch
-    
-                # exit eval model
-                model.train()
-                train_loss.clear()
-                logger.info('\n***** Epoch {}/{} *****'.format(done_epoch, config.max_epoch))
-                sys.stdout.flush()
+    # print("Hello")
+    # print(config)
+    gen(task, model, val_data, config, evaluator, num_batch=config.preview_batch_num)
+    # exit eval model
+    # model.train()
+    # train_loss.clear()
+    # logger.info('\n***** Epoch {}/{} *****'.format(done_epoch, config.max_epoch))
+    # sys.stdout.flush()
 
 
 def validate(task, model, val_data, config, batch_cnt=None, use_py=None):
@@ -404,7 +117,7 @@ def generate(task, model, data, config, evaluator, num_batch, dest_f=None):
 
     model.eval()
     de_tknize = get_detokenize()
-    data.epoch_init(config, shuffle=num_batch is not None, verbose=False)
+    data.epoch_init(config, shuffle=False, verbose=False)
     evaluator.initialize()
     logger.info('Generation: {} batches'.format(data.num_batch
                                           if num_batch is None
@@ -412,10 +125,13 @@ def generate(task, model, data, config, evaluator, num_batch, dest_f=None):
     batch_cnt = 0
     print_cnt = 0
     while True:
+        print("Batch count")
+        print (batch_cnt)
         batch_cnt += 1
         batch = data.next_batch()
         if batch is None or (num_batch is not None and data.ptr > num_batch):
             break
+
         outputs, labels = model(config, task, batch, mode=GEN, gen_type=config.gen_type)
 
         # move from GPU to CPU
@@ -451,14 +167,14 @@ def generate(task, model, data, config, evaluator, num_batch, dest_f=None):
 
             evaluator.add_example(true_str, pred_str)
 
-            if num_batch is None or batch_cnt < 2:
-                print_cnt += 1
-                write('prev_ctx = %s' % (prev_ctx, ))
-                write('True: {}'.format(true_str, ))
-                write('Pred: {}'.format(pred_str, ))
-                write('='*30)
-                if num_batch is not None and print_cnt > 10:
-                    break
+            # if num_batch is None or batch_cnt < 2:
+            print_cnt += 1
+            write('prev_ctx = %s' % (prev_ctx, ))
+            write('True: {}'.format(true_str, ))
+            write('Pred: {}'.format(pred_str, ))
+            write('='*30)
+            # if num_batch is not None and print_cnt > 10:
+            #     break
 
     write(evaluator.get_report())
     write('Generation Done')
@@ -475,8 +191,6 @@ def get_sent(vocab, de_tknize, data, b_id, stop_eos=True, stop_pad=True):
             ws.append(w)
 
     return de_tknize(ws)
-
-
 
 
 

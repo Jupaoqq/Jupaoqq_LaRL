@@ -20,17 +20,22 @@ class EncoderRNN(BaseRNN):
 
     def forward(self, input_var, init_state=None, input_lengths=None, goals=None):
         # add goals
-        if goals is not None:
-            batch_size, max_ctx_len, ctx_nhid = input_var.size()
-            goals = goals.view(goals.size(0), 1, goals.size(1))
-            goals_rep = goals.repeat(1, max_ctx_len, 1).view(batch_size, max_ctx_len, -1) # (batch_size, max_ctx_len, goal_nhid)
-            input_var = th.cat([input_var, goals_rep], dim=2)
+        # if goals is not None:
+        #     batch_size, max_ctx_len, ctx_nhid = input_var.size()
+        #     goals = goals.view(goals.size(0), 1, goals.size(1))
+        #     goals_rep = goals.repeat(1, max_ctx_len, 1).view(batch_size, max_ctx_len, -1) # (batch_size, max_ctx_len, goal_nhid)
+        #     input_var = th.cat([input_var, goals_rep], dim=2)
 
         embedded = self.input_dropout(input_var)
+        # print("embed1")
+        # print(embedded.shape)
 
         if self.variable_lengths:
             embedded = nn.utils.rnn.pack_padded_sequence(embedded, input_lengths,
                                                          batch_first=True)
+            
+        # print("embed2")
+        # print(embedded.shape)
         if init_state is not None:
             output, hidden = self.rnn(embedded, init_state)
         else:
@@ -53,7 +58,7 @@ class RnnUttEncoder(nn.Module):
 
         self.rnn = EncoderRNN(input_dropout_p=input_dropout_p,
                               rnn_cell=rnn_cell, 
-                              input_size=embedding_dim+feat_size+goal_nhid, 
+                              input_size=embedding_dim, 
                               hidden_size=utt_cell_size, 
                               num_layers=num_layers, 
                               output_dropout_p=output_dropout_p, 
@@ -89,13 +94,13 @@ class RnnUttEncoder(nn.Module):
         # print("word_embeddings2")
         # print(word_embeddings.shape)
         # add goals
-        if goals is not None:
-            # print(goals)
-            goals = goals.view(goals.size(0), 1, 1, goals.size(1))
-            # print("goals2")
-            # print(goals.shape)
-            goals_rep = goals.repeat(1, max_ctx_len, max_utt_len, 1).view(batch_size*max_ctx_len, max_utt_len, -1) # (batch_size*max_ctx_len, max_utt_len, goal_nhid)
-            word_embeddings = th.cat([word_embeddings, goals_rep], dim=2)
+        # if goals is not None:
+        #     # print(goals)
+        #     goals = goals.view(goals.size(0), 1, 1, goals.size(1))
+        #     # print("goals2")
+        #     # print(goals.shape)
+        #     goals_rep = goals.repeat(1, max_ctx_len, max_utt_len, 1).view(batch_size*max_ctx_len, max_utt_len, -1) # (batch_size*max_ctx_len, max_utt_len, goal_nhid)
+        #     word_embeddings = th.cat([word_embeddings, goals_rep], dim=2)
 
         # print("word_embeddings3")
         # print(word_embeddings.shape)

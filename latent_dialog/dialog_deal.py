@@ -27,9 +27,11 @@ class Dialog(object):
         self.w_matrix_no_z = th.randn(1, 128, device='cuda')
         self.evaluator = evaluators.BleuEvaluator('Roll out')
         self._register_metrics()
-        self.BERT_model = SentenceTransformer('all-MiniLM-L6-v2')
+        self.BERT_model = SentenceTransformer('sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2')
         self.usr_embedding = self.BERT_model.encode(usr_sent)
         self.sys_embedding = self.BERT_model.encode(sys_sent)
+        print("BERT finished")
+
 
 
     def consine_sim(self, queries, person):
@@ -77,7 +79,7 @@ class Dialog(object):
         self.metrics.register_average('recall@5')
         self.metrics.register_average('recall@10')
 
-        # self.metrics.register_average('dist-1')
+        self.metrics.register_average('dist-1')
         self.metrics.register_average('dist-2')
         self.metrics.register_average('dist-3')
         self.metrics.register_average('dist-4')
@@ -115,26 +117,27 @@ class Dialog(object):
         avg = th.div(sum, len(mention)).unsqueeze(0).float()
         return history, mention, avg
 
-    def reward(self, profile, movieID):
+    def reward(self, name, profile, movieID, conv_reward):
         rew = 0
-        for key, value in profile.items():
-            if key == movieID:
-
-                if value['seen'] == '1':
-                    rew = 0.05
-                if value['liked'] == '1':
-                    rew = 0.5
-                if value['liked'] == '0':
-                    rew = -0.5
-
+        if name == "system":
+            for key, value in profile.items():
+                if key == movieID:
+                    if value['seen'] == '1':
+                        rew = 0.1
+                    if value['liked'] == '1':
+                        rew = 0.5
+                    if value['liked'] == '0':
+                        rew = -0.5
+        rew += conv_reward * 0.2
         return rew
 
     def run(self, ctxs, kg, update = True, verbose=True):
+
         """Runs one instance of the dialogue."""
         # assert len(self.agents) == len(ctxs)
         profile = ""
         # initialize agents by feeding in the context
-        
+
         for agent, ctx in zip(self.agents, ctxs):
             agent.feed_context(ctx)
             if agent.name == "User":
@@ -146,6 +149,7 @@ class Dialog(object):
                 #         print(param.data)
                 self.w_matrix = agent.model.w_matrix
         sys_reward = []
+        usr_reward = []
         rewards = [0,0]
         # choose who goes first by random
         if np.random.rand() < 0.5:
@@ -216,7 +220,7 @@ class Dialog(object):
                         embed, m_id, _ = softmax_func(z, profile, kg, w_m, use_z)
                         if len(m_id) > 0:
                             sys_prob.append(m_id)
-                            rew = self.reward(profile, m_id[0])
+                            rew = self.reward("system", profile, m_id[0], rew_sent)
                             if rew > 0.49:
                                 sys_movie_mention_like.append(m_id[0])
                             history, mention, avg = self.mention(sys_movie_mention_history, sys_movie_mention, m_id, embed, user = False)
@@ -228,9 +232,14 @@ class Dialog(object):
                 #     if "[ITEM]" in i:
                 #         history, mention, avg = mention(user_movie_mention_history, user_movie_mention, i, user = True)
                 #         user_movie_mention_history, user_movie_mention = history, mention
+            rew = rew + rew_sent
             if writer.name == "System":
                 sys_reward.append(rew)
                 sys_sent.append(out_words)
+            else:
+                rew = self.reward("user", None, None, rew_sent)
+                usr_reward.append(rew)
+
             reader.read(out, avg)
 
             # make the other agent to read it
@@ -255,6 +264,7 @@ class Dialog(object):
         # print("sys reward:")
         # print(sys_reward)
         rewards[0] = sum(sys_reward)
+        rewards[1] = sum(usr_reward)
         self.metrics.record('item ratio', i_turn/s_turn)
         # evaluate the choices, produce agreement and a reward
         # if verbose:
@@ -274,6 +284,7 @@ class Dialog(object):
 
         if len(sys_sent) > 0:
             d1, d2, d3, d4 = self.evaluator.distinct_metrics(sys_sent)
+            self.metrics.record('dist-1', d1)
             self.metrics.record('dist-2', d2)
             self.metrics.record('dist-3', d3)
             self.metrics.record('dist-4', d4)
@@ -281,11 +292,13 @@ class Dialog(object):
         # perform update, in case if any of the agents is learnable
         if update:
             for agent, reward in zip(self.agents, rewards):
-                if agent.name == "System":
-                    if not all(v == 0 for v in sys_reward):
-                        agent.update(sys_reward)
-                    else:
-                        pass
+                # if agent.name == "System":
+                print(agent.name)
+                print(reward)
+                if not all(v == 0 for v in reward):
+                    agent.update(reward)
+                else:
+                    pass
                         # print("no update")
 
         self.metrics.record('dialog_len', len(conv))
@@ -295,8 +308,10 @@ class Dialog(object):
         if verbose:
             # print("Profile:")
             # print(profile)
-            print("Reward:")
+            print("System Reward:")
             print(sys_reward)
+            print("User Reward:")
+            print(usr_reward)
             print('='*50)
             print(self.show_metrics())
             print('='*50)
@@ -305,7 +320,10 @@ class Dialog(object):
         stats['recall@1'] = self.metrics.metrics['recall@1'].show()
         stats['recall@5'] = self.metrics.metrics['recall@5'].show()
         stats['recall@10'] = self.metrics.metrics['recall@10'].show()
+        stats['dist-1'] = self.metrics.metrics['dist-1'].show()
+        stats['dist-2'] = self.metrics.metrics['dist-2'].show()
         stats['dist-3'] = self.metrics.metrics['dist-3'].show()
+        stats['dist-4'] = self.metrics.metrics['dist-4'].show()
         stats['system_rew'] = self.metrics.metrics['system_rew'].show()
         # stats['system_unique'] = self.metrics.metrics['system_unique'].show()
 
